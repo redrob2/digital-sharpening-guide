@@ -22,6 +22,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -143,21 +144,35 @@ fun LiveScreen(ble: BleClient, prefs: AppPrefs, immersive: Boolean, onDevices: (
 
 @Composable
 private fun TopControls(prefs: AppPrefs, name: String?, link: LinkState, onDevices: () -> Unit) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        TextButton(onClick = onDevices) {
+    Row(
+        Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        // The name gives way first on a narrow (portrait) screen; the two
+        // actions on the right always stay on one line.
+        TextButton(onClick = onDevices, modifier = Modifier.weight(1f, fill = false)) {
             val status = when (link) {
                 LinkState.READY -> "connected"
                 LinkState.IDLE -> "not connected"
                 LinkState.CONNECTING, LinkState.SETTING_UP -> "connecting"
                 LinkState.RECONNECTING -> "reconnecting"
             }
-            Text("${name ?: "Choose stick"} · $status", color = Color.White.copy(alpha = 0.85f))
+            Text(
+                "${name ?: "Choose stick"} · $status",
+                color = Color.White.copy(alpha = 0.85f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
-        Spacer(Modifier.weight(1f))
+        Row(verticalAlignment = Alignment.CenterVertically) {
         TextButton(onClick = {
             prefs.tenthsMode = TenthsMode.entries[(prefs.tenthsMode.ordinal + 1) % TenthsMode.entries.size]
-        }) { Text("Decimals: ${prefs.tenthsMode.label}", color = Color.White) }
-        TextButton(onClick = { prefs.immersive = true }) { Text("Fullscreen", color = Color.White) }
+        }) { Text("Decimals: ${prefs.tenthsMode.label}", color = Color.White, maxLines = 1, softWrap = false) }
+        TextButton(onClick = { prefs.immersive = true }) {
+            Text("Fullscreen", color = Color.White, maxLines = 1, softWrap = false)
+        }
+        }
     }
 }
 
