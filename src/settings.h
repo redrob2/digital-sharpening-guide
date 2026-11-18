@@ -16,6 +16,18 @@ namespace settings {
     bool       load_steady();
     void       save_steady(bool on);
 
+    // Show the live ACTIVE angle to 0.1 deg instead of whole degrees.
+    // Defaults OFF; toggled by A-hold on the TOLERANCE screen or from the app.
+    bool       load_tenths();
+    void       save_tenths(bool on);
+
+    // Last target angle the user picked (preset or companion app), so the stick
+    // starts where they left off. Stored as tenths of a degree; kDefaultTargetDeg
+    // on a stick that has never saved one. Written only when the value changes.
+    constexpr float kDefaultTargetDeg = 14.0f;
+    float      load_target();
+    void       save_target(float deg);
+
     Vec3       load_gyro_bias();
     void       save_gyro_bias(Vec3 bias_dps);
 

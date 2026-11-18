@@ -13,13 +13,14 @@ namespace ui {
         bool       steady;            // hold the shown degree against sub-degree chatter
         float      error_deg;         // bevel - target; signed vial bubble under ANGLE
         float      tol_deg;           // half-width used to scale that vial
+        bool       tenths;            // show the angle to 0.1 deg instead of whole degrees
     };
 
     void begin();
     void clear();
     void draw_boot();
     void draw_set_target(float live_angle_deg, bool in_preset_mode, PresetSelection preset);
-    void draw_set_tolerance(Tolerance tol, bool steady);
+    void draw_set_tolerance(Tolerance tol, bool steady, bool tenths);
     void draw_active(const ActiveView& v);
     void draw_summary(float target_deg, Tolerance tol, uint32_t a, uint32_t b,
                       uint32_t duration_s, uint8_t green_pct);
@@ -44,6 +45,12 @@ namespace ui {
     // -1 = unknown. Cheap to call every tick — repaints only on change or after
     // a full-screen wipe.
     void draw_battery(int bars, bool charging);
+
+    // Firmware update in progress from the companion app. first = full paint;
+    // otherwise only the bar/percentage repaint, and only on change.
+    void draw_ota(int percent, bool first);
+    // The transfer was abandoned or rejected; shown briefly before a restart.
+    void draw_ota_failed();
 
     void set_backlight(uint8_t percent); // 0..100
 }

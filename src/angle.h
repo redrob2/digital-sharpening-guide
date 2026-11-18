@@ -19,7 +19,15 @@ ColorState classify(float magnitude_deg, float target_deg, float tolerance_deg,
 
 // Hysteresis half-width used in ACTIVE when steady mode is on. Comfortably wider
 // than the residual angle noise, well inside the tightest (+/-2 deg) tolerance.
-constexpr float CLASSIFY_HYSTERESIS_DEG = 0.7f;
+//
+// It was 0.7 deg when the estimate itself wandered about a degree during
+// strokes. With the motion-gated filter the reading is far quieter, and 0.7
+// made the colour visibly trail the number (the digits crossed the band edge
+// well before the screen changed). 0.3 keeps a whole-degree display from
+// flickering; in tenths mode the user can see a 0.3 lag, so it is 0.15 there —
+// still several times the at-rest noise (~0.03 deg).
+constexpr float CLASSIFY_HYSTERESIS_DEG        = 0.3f;
+constexpr float CLASSIFY_HYSTERESIS_TENTHS_DEG = 0.15f;
 
 // --- Edge-axis (skew-corrected) bevel measurement ---
 

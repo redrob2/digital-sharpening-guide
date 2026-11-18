@@ -64,6 +64,7 @@ static void zero_cal_flat_raise(App& a, uint32_t& t, Vec3 flat_pose, Vec3 raise_
 void setUp(void) {
     settings::save_tolerance(Tolerance::NORMAL);
     settings::save_buzzer(false);
+    settings::save_target(settings::kDefaultTargetDeg);
     session::clear();
     settings::clear_session_history();   // keep tests order-independent
     feedback::test_reset_beep_count();
@@ -202,6 +203,48 @@ void test_set_target_b_enters_preset_mode_and_cycles(void) {
     advance(a, t, 100, InputEvent::A_SHORT);
     TEST_ASSERT_EQUAL_FLOAT(15.0f, a.target_deg());
     TEST_ASSERT_EQUAL_INT((int)State::SET_TOLERANCE, (int)a.current());
+
+    // The presets open on 14: a single B then A picks it.
+    App b;
+    b.begin(false);
+    t = 0;
+    advance(b, t, 2100);
+    advance(b, t, 100, InputEvent::B_SHORT);
+    advance(b, t, 100, InputEvent::A_SHORT);
+    TEST_ASSERT_EQUAL_FLOAT(14.0f, b.target_deg());
+
+    // 12 is still there, one step past CANCEL (14,15,17,20,22,25,28,CANCEL,12).
+    App c;
+    c.begin(false);
+    t = 0;
+    advance(c, t, 2100);
+    for (int i = 0; i < 9; i++) advance(c, t, 100, InputEvent::B_SHORT);
+    advance(c, t, 100, InputEvent::A_SHORT);
+    TEST_ASSERT_EQUAL_FLOAT(12.0f, c.target_deg());
+}
+
+void test_last_target_is_remembered_across_boots(void) {
+    {
+        App a;
+        a.begin(false);
+        uint32_t t = 0;
+        advance(a, t, 2100);
+        TEST_ASSERT_EQUAL_FLOAT(14.0f, a.target_deg());          // new stick: default
+        for (int i = 0; i < 4; i++) advance(a, t, 100, InputEvent::B_SHORT);   // 14,15,17,20
+        advance(a, t, 100, InputEvent::A_SHORT);
+        TEST_ASSERT_EQUAL_FLOAT(20.0f, a.target_deg());
+    }
+    App b;                                                       // next power-on
+    b.begin(false);
+    TEST_ASSERT_EQUAL_FLOAT(20.0f, b.target_deg());
+
+    // The companion app target is remembered the same way.
+    App::RemoteSettings s = b.current_settings();
+    s.target_deg = 16.5f;
+    b.apply_remote_settings(s, 0);
+    App c;
+    c.begin(false);
+    TEST_ASSERT_EQUAL_FLOAT(16.5f, c.target_deg());
 }
 
 void test_preset_cycles_to_25_and_28(void) {
@@ -209,7 +252,7 @@ void test_preset_cycles_to_25_and_28(void) {
     a.begin(false);
     uint32_t t = 0;
     advance(a, t, 2100);
-    // B enters preset mode on 12; each further B steps 15/17/20/22/25/28.
+    // B enters preset mode on 14; each further B steps 15/17/20/22/25/28.
     for (int i = 0; i < 6; i++) advance(a, t, 100, InputEvent::B_SHORT);
     advance(a, t, 100, InputEvent::A_SHORT);
     TEST_ASSERT_EQUAL_FLOAT(25.0f, a.target_deg());
@@ -513,6 +556,52 @@ void test_tolerance_b_long_toggles_steady_without_advancing(void) {
     TEST_ASSERT_EQUAL_INT((int)State::SET_TOLERANCE, (int)a.current());
     advance(a, t, 100, InputEvent::B_LONG);
     TEST_ASSERT_EQUAL_INT((int)before, (int)a.steady_on());
+}
+
+void test_tolerance_a_long_toggles_tenths_without_advancing(void) {
+    App a;
+    a.begin(false);
+    uint32_t t = 0;
+    advance(a, t, 2100);
+    advance(a, t, 100, InputEvent::A_SHORT);    // SET_TARGET -> SET_TOLERANCE
+    const bool before = a.tenths_on();
+    const uint32_t rev = a.settings_rev();
+    advance(a, t, 100, InputEvent::A_LONG);
+    TEST_ASSERT_EQUAL_INT((int)!before, (int)a.tenths_on());
+    TEST_ASSERT_EQUAL_INT((int)!before, (int)settings::load_tenths());
+    TEST_ASSERT_TRUE(a.settings_rev() != rev);
+    TEST_ASSERT_EQUAL_INT((int)State::SET_TOLERANCE, (int)a.current());
+    advance(a, t, 100, InputEvent::A_LONG);
+    TEST_ASSERT_EQUAL_INT((int)before, (int)a.tenths_on());
+}
+
+void test_remote_settings_apply_clamp_and_persist(void) {
+    App a;
+    a.begin(false);
+    uint32_t t = 0;
+    advance(a, t, 2100);                         // BOOT -> SET_TARGET
+    App::RemoteSettings s = a.current_settings();
+    s.target_deg = 99.0f;                        // out of range -> clamp to 45
+    s.tol        = Tolerance::EASY;
+    s.tenths     = true;
+    s.buzzer     = true;
+    const uint32_t rev = a.settings_rev();
+    a.apply_remote_settings(s, t);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 45.0f, a.target_deg());
+    TEST_ASSERT_EQUAL_INT((int)Tolerance::EASY, (int)a.tolerance());
+    TEST_ASSERT_EQUAL_INT((int)Tolerance::EASY, (int)settings::load_tolerance());
+    TEST_ASSERT_TRUE(a.tenths_on());
+    TEST_ASSERT_TRUE(a.buzzer_on());
+    TEST_ASSERT_TRUE(a.settings_rev() != rev);
+    float deg = 0.0f;
+    TEST_ASSERT_TRUE(a.live_angle(deg));         // SET_TARGET shows the target
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 45.0f, deg);
+    s.target_deg = NAN;                          // garbage -> clamp to 5
+    a.apply_remote_settings(s, t);
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 5.0f, a.target_deg());
+    // Leave persisted state as other tests expect it.
+    s.tol = Tolerance::NORMAL; s.tenths = false; s.buzzer = false;
+    a.apply_remote_settings(s, t);
 }
 
 void test_tolerance_b_long_does_not_change_tolerance(void) {
@@ -945,6 +1034,7 @@ int main(int, char**) {
     RUN_TEST(test_resume_prompt_times_out_to_set_target);
     RUN_TEST(test_set_target_a_captures_and_advances);
     RUN_TEST(test_set_target_b_enters_preset_mode_and_cycles);
+    RUN_TEST(test_last_target_is_remembered_across_boots);
     RUN_TEST(test_preset_cycles_to_25_and_28);
     RUN_TEST(test_preset_cancel_returns_to_live_capture);
     RUN_TEST(test_set_target_a_long_opens_verify);
@@ -968,6 +1058,8 @@ int main(int, char**) {
     RUN_TEST(test_resume_restores_time_on_angle);
     RUN_TEST(test_tolerance_b_long_toggles_steady_without_advancing);
     RUN_TEST(test_tolerance_b_long_does_not_change_tolerance);
+    RUN_TEST(test_tolerance_a_long_toggles_tenths_without_advancing);
+    RUN_TEST(test_remote_settings_apply_clamp_and_persist);
     RUN_TEST(test_tolerance_a_confirms_and_advances);
     RUN_TEST(test_active_long_a_goes_to_summary);
     RUN_TEST(test_summary_a_starts_new_session);

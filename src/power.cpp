@@ -36,7 +36,72 @@ IdleConfig config_for(State s) {
     __builtin_unreachable();
 }
 
-void begin() {}
+void begin() {
+#if !defined(UNIT_TEST) && defined(SG_BOARD_S3)
+    // StickS3: the M5PM1 PMIC resets the whole stick on a single click of the
+    // power key all by itself (factory default; M5's docs: "single click:
+    // power on / reset, double click: power off"). That reset beats any
+    // firmware handling of the press, so "press = off" never worked — the
+    // stick just restarted. BTN_CFG_1 (0x49) bit0 SINGLE_RESET_DIS turns the
+    // hardware reset off; a click then only raises the single-click IRQ,
+    // which M5Unified reports as a BtnPWR click and main.cpp turns into a
+    // clean power-off. A click while off still powers on, and the PMIC's own
+    // double-click power-off stays as the escape hatch if the firmware hangs.
+    // Re-applied every boot (cheap, and survives a PMIC config reset).
+    M5.Power.M5pm1.bitOn(0x49, 0x01);
+    M5.Power.getKeyState();   // drop any click latched before the reset was disabled
+#endif
+}
+
+bool s3_power_key_clicked(uint32_t now_ms) {
+#if !defined(UNIT_TEST) && defined(SG_BOARD_S3)
+    // The PMIC's click IRQ (IRQ_STATUS3) is unusable here: the M5PM1 clears
+    // its IRQ status whenever none of its GPIOs is configured as an IRQ pin,
+    // which is the case on the StickS3, so M5Unified's BtnPWR never sees a
+    // click. BTN_Status (0x48) has no such condition:
+    //   bit0 = pressed right now, bit7 = "was pressed" latch, cleared by reading.
+    // Fire on RELEASE so the shutdown never lands mid-press, and ignore
+    // everything until the key has been seen up once (the power-on press).
+    static uint32_t last_ms = 0;
+    static bool     armed   = false;
+    static bool     down    = false;
+    static uint32_t down_ms = 0;
+    if (now_ms - last_ms < 60) return false;
+    last_ms = now_ms;
+    const uint8_t v       = M5.Power.M5pm1.readRegister8(0x48);
+    const bool    pressed = v & 0x01;
+    const bool    latched = v & 0x80;
+    if (!armed) {
+        if (!pressed) armed = true;     // this read also dropped any stale latch
+        return false;
+    }
+    if (pressed) {
+        if (!down) { down = true; down_ms = now_ms; }
+        return false;
+    }
+    const bool was_down = down;
+    down = false;
+    // A hold is the PMIC's own gesture (download mode) — not a click.
+    if (was_down) return (now_ms - down_ms) < 1500;
+    return latched;                     // press and release between two polls
+#else
+    (void)now_ms;
+    return false;
+#endif
+}
+
+void restart() {
+#if !defined(UNIT_TEST)
+#if defined(SG_BOARD_S3)
+    // PMIC restart (SYS_CMD: key 0xA + CMD 10): power-cycles the rails, so the
+    // LCD comes back from a true reset — a bare esp_restart() could leave the
+    // panel dark after an OTA.
+    M5.Power.M5pm1.writeRegister8(0x0C, 0xA2);
+    delay(500);               // only reached if the PMIC ignored the command
+#endif
+    esp_restart();
+#endif
+}
 
 int battery_level_gate(int pct, int batt_mv) {
     if (batt_mv < BATTERY_MV_VALID_MIN) return -1;
@@ -158,6 +223,21 @@ BatteryView battery_sample(uint32_t now_ms) {
             // re-powers the device. Trade-off vs. Plus/Plus2: the S3 cold-boots on
             // wake, so the in-progress session in RTC RAM is NOT resumed. That is an
             // inherent StickS3 limitation, and better than a wake-less deep sleep.
+            //
+            // The M5PM1 reports the power key as soon as it goes DOWN, so a
+            // shutdown issued right away lands while the finger is still on
+            // the button — and the PMIC then takes the rest of that same
+            // press as "power on". The stick appeared to reset instead of
+            // turning off (a shutdown with no button involved stays off).
+            // The screen is already dark (brightness 0 above), so it feels
+            // immediate; wait out the press, drain the PMIC's key latch, and
+            // only then cut power.
+            // (With the PMIC's single-click reset disabled in begin(), the
+            // click IRQ only fires once the press is complete; the short
+            // settle below is belt and braces.)
+            M5.Display.sleep();
+            delay(S3_POWEROFF_SETTLE_MS);
+            M5.Power.getKeyState();
             M5.Power.powerOff();
             break;
     }

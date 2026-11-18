@@ -48,6 +48,10 @@ private:
     float a_tau_      = 0.0f;                  // 0 = disabled
     Vec3  a_lp_       = {0.0f, 0.0f, 0.0f};
     bool  a_lp_valid_ = false;
+    // Ticks left in which the device counts as "moving" (see MOTION_* below).
+    uint8_t motion_hold_ = 0;
+public:
+    bool moving() const { return motion_hold_ > 0; }
 };
 
 namespace mahony {
@@ -82,6 +86,20 @@ namespace mahony {
     // angle). Long tau — the default — while they are stroking, so the 0.18 g
     // sweep cannot steer gravity. Adaptive path uses adjust_accel_tau().
     constexpr float ACCEL_LP_TAU_CORRECT_S = 0.15f;
+
+    // --- Motion gate (steady mode only) ---
+    //
+    // The low-pass above removes the zero-mean part of a stroke, but strokes
+    // are not zero-mean over the ~1 s the correction listens: a real 30 s
+    // stroking capture on a StickS3 (held at ~10 deg) showed the estimate
+    // wandering 0.67 deg RMS / 1.2 deg p95 around the true angle. Replaying the
+    // same capture with the accel correction cut 10x whenever the raw accel
+    // departs from its slow average brought that to 0.18 deg RMS / 0.34 deg
+    // p95, with the same settle at rest. Cutting to zero was no better and
+    // gives up the long-term anchor, so a tenth it is.
+    constexpr float   MOTION_DEV_G      = 0.04f;  // |raw - smoothed| accel that means "moving"
+    constexpr uint8_t MOTION_HOLD_TICKS = 15;     // 0.3 s at 50 Hz after the last such sample
+    constexpr float   MOTION_KP_SCALE   = 0.1f;   // accel correction gain while moving
     constexpr float CORRECT_EDGE_DPS       = 15.0f;
 
     // --- Continuous gyro-bias refresh (see App::refresh_bias_if_still_) ---
@@ -107,4 +125,28 @@ namespace mahony {
     // True when the filter's gravity estimate has drifted from a trustworthy raw
     // gravity reading while the device is held still — the cue to nudge_to_gravity().
     bool should_snap(Vec3 g_filter, Vec3 accel_g, Vec3 gyro_dps);
+
+    // Sustained-stillness gate in front of should_snap().
+    //
+    // should_snap() alone looks at ONE sample, and a stroke turnaround passes
+    // it: the gyro is momentarily ~0 and |a| stays near 1 g (horizontal accel
+    // adds in quadrature — see ACCEL_TRUST_TOL_G), yet the raw vector is tilted
+    // by the sweep. Snapping there replaced a good estimate with a 10-30 deg
+    // wrong one (measured on a StickS3: 14 such jumps in 13 s of strokes). Rest
+    // is different from a turnaround in duration: the raw accel holds still
+    // for many ticks. Require that before any snap.
+    constexpr uint16_t SNAP_STILL_TICKS       = 25;     // 0.5 s at 50 Hz
+    constexpr float    SNAP_STILL_ACCEL_DELTA = 0.01f;  // g, tick-to-tick raw accel change
+    constexpr float    SNAP_STILL_ACCEL_TOL   = 0.03f;  // g, |a| within this of 1 g
+
+    class StillGate {
+    public:
+        // Feed every tick; true once the device has been still long enough.
+        bool update(Vec3 accel_g, Vec3 gyro_dps);
+        void reset() { ticks_ = 0; have_prev_ = false; }
+    private:
+        uint16_t ticks_     = 0;
+        Vec3     prev_      = {0.0f, 0.0f, 0.0f};
+        bool     have_prev_ = false;
+    };
 }

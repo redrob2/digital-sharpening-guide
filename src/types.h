@@ -50,6 +50,7 @@ enum class InputEvent : uint8_t {
 
 enum class PresetSelection : uint8_t {
     P12,
+    P14,
     P15,
     P17,
     P20,
@@ -96,6 +97,7 @@ inline float tolerance_degrees(Tolerance t) {
 inline float preset_degrees(PresetSelection p) {
     switch (p) {
         case PresetSelection::P12:    return 12.0f;
+        case PresetSelection::P14:    return 14.0f;
         case PresetSelection::P15:    return 15.0f;
         case PresetSelection::P17:    return 17.0f;
         case PresetSelection::P20:    return 20.0f;

@@ -5,6 +5,8 @@ namespace {
     Tolerance g_tol    = Tolerance::NORMAL;
     bool      g_buzz   = false;
     bool      g_steady = true;
+    bool      g_tenths = false;
+    float     g_target = settings::kDefaultTargetDeg;
     Vec3      g_bias   = {0.0f, 0.0f, 0.0f};
     SessionRecord g_hist[kSessionHistoryMax];
     int           g_hist_count = 0;
@@ -17,6 +19,10 @@ namespace settings {
     void      save_buzzer(bool on)        { g_buzz = on; }
     bool      load_steady()               { return g_steady; }
     void      save_steady(bool on)        { g_steady = on; }
+    bool      load_tenths()               { return g_tenths; }
+    void      save_tenths(bool on)        { g_tenths = on; }
+    float     load_target()               { return g_target; }
+    void      save_target(float deg)      { g_target = deg; }
     int  load_session_history(SessionRecord* out, int max) {
         int n = (g_hist_count < max) ? g_hist_count : max;
         for (int i = 0; i < n; i++) out[i] = g_hist[i];
@@ -51,6 +57,17 @@ namespace settings {
     void save_buzzer(bool on)        { prefs.putBool("buzz", on); }
     bool load_steady()               { return prefs.getBool("steady", true); }
     void save_steady(bool on)        { prefs.putBool("steady", on); }
+    bool load_tenths()               { return prefs.getBool("tenths", false); }
+    void save_tenths(bool on)        { prefs.putBool("tenths", on); }
+    float load_target() {
+        const uint16_t x10 = prefs.getUShort("tgt", (uint16_t)(kDefaultTargetDeg * 10.0f));
+        if (x10 < 50 || x10 > 450) return kDefaultTargetDeg;   // corrupt / out of range
+        return x10 / 10.0f;
+    }
+    void save_target(float deg) {
+        const uint16_t x10 = (uint16_t)(deg * 10.0f + 0.5f);
+        if (prefs.getUShort("tgt", 0) != x10) prefs.putUShort("tgt", x10);   // spare the flash
+    }
     // Gyro bias is stored as a single NVS blob (one entry instead of three float
     // keys). Old bx/by/bz keys may remain orphaned in NVS; that is acceptable.
     Vec3 load_gyro_bias() {

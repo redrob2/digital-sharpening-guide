@@ -5,6 +5,7 @@
 #include <cstring>
 #include <cstdio>
 #include <cmath>
+#include "version.h"
 
 // Landscape layout: M5StickC Plus panel is 135x240 native; setRotation(1) gives
 // a 240(W) x 135(H) canvas, which is how the device is held in use.
@@ -13,6 +14,10 @@ namespace {
     constexpr int SCR_H = 135;
 
     constexpr uint16_t COL_GREEN = 0x07E0;
+    // ACTIVE "on angle" background. Pure 0x07E0 is so bright that the white
+    // number on it washes out; ~70% green (#00B200) keeps it unmistakably green
+    // while giving the digits real contrast. Text-on-black uses COL_GREEN.
+    constexpr uint16_t COL_GREEN_BG = 0x0580;
     constexpr uint16_t COL_RED   = 0xF800;
     constexpr uint16_t COL_BLUE  = 0x001F;
     constexpr uint16_t COL_BLACK = 0x0000;
@@ -60,7 +65,7 @@ namespace {
 
     uint16_t color_for(ColorState c) {
         switch (c) {
-            case ColorState::GREEN: return COL_GREEN;
+            case ColorState::GREEN: return COL_GREEN_BG;
             case ColorState::BLUE:  return COL_BLUE;
             case ColorState::RED:   return COL_RED;
         }
@@ -143,7 +148,7 @@ void draw_boot() {
     clear();
     draw_centered("SHARPENING", 38, 2, COL_WHITE, COL_BLACK);
     draw_centered("GUIDE",      64, 2, COL_WHITE, COL_BLACK);
-    draw_centered("v1.1.2", 100, 1, COL_WHITE, COL_BLACK);
+    draw_centered("v" SG_FW_VERSION, 100, 1, COL_WHITE, COL_BLACK);
 }
 
 void draw_set_target(float live_angle_deg, bool in_preset_mode, PresetSelection preset) {
@@ -161,7 +166,7 @@ void draw_set_target(float live_angle_deg, bool in_preset_mode, PresetSelection 
                   118, 1, COL_WHITE, COL_BLACK);
 }
 
-void draw_set_tolerance(Tolerance tol, bool steady) {
+void draw_set_tolerance(Tolerance tol, bool steady, bool tenths) {
     clear();
     draw_centered("TOLERANCE", 8, 1, COL_WHITE, COL_BLACK);
     const char* label = "NORMAL +-3";
@@ -173,8 +178,9 @@ void draw_set_tolerance(Tolerance tol, bool steady) {
     draw_centered(label, 46, 3, COL_WHITE, COL_BLACK);
     // Beta A/B switch. Lives here because this screen already repaints on input
     // and is the last stop before a session starts.
-    draw_centered(steady ? "STEADY: ON" : "STEADY: OFF", 84, 2, COL_WHITE, COL_BLACK);
-    draw_centered("A:Confirm  B:Chg  B-hold:Steady", 118, 1, COL_WHITE, COL_BLACK);
+    draw_centered(steady ? "STEADY: ON" : "STEADY: OFF", 80, 2, COL_WHITE, COL_BLACK);
+    draw_centered(tenths ? "TENTHS (0.1 deg): ON" : "TENTHS (0.1 deg): OFF", 102, 1, COL_WHITE, COL_BLACK);
+    draw_centered("A:OK B:Chg B-hold:Steady A-hold:0.1", 120, 1, COL_WHITE, COL_BLACK);
 }
 
 void draw_active(const ActiveView& v) {
@@ -205,9 +211,13 @@ void draw_active(const ActiveView& v) {
     // the shown degree only moves once the live angle clears it by more than half
     // a degree plus a margin, which leaves a ~0.3 deg deadband and stops the
     // chatter without adding any lag to a real change.
+    //
+    // Tenths mode applies the same idea one decade down: step 0.1, hold until
+    // the live value clears the shown one by 0.065 deg.
+    const float step = v.tenths ? 0.1f : 1.0f;
     if (v.steady) {
-        if (!s_shown_valid || std::fabs(v.angle_deg - s_shown_deg) > 0.65f) {
-            s_shown_deg  = (float)std::lround(v.angle_deg);
+        if (!s_shown_valid || std::fabs(v.angle_deg - s_shown_deg) > 0.65f * step) {
+            s_shown_deg  = (float)std::lround(v.angle_deg / step) * step;
             s_shown_valid = true;
         }
     } else {
@@ -215,14 +225,23 @@ void draw_active(const ActiveView& v) {
         s_shown_valid = true;
     }
     char abuf[12];
-    std::snprintf(abuf, sizeof abuf, "%ld", std::lround(s_shown_deg));
-    // Size 11 is 198 px wide at 3 digits and would clip the battery. Typical
-    // bevels are 1–2 digits; drop a step only when the string grows.
-    const int num_sz = (abuf[1] != '\0' && abuf[2] != '\0') ? 9 : NUM_SZ;
+    if (v.tenths) {
+        std::snprintf(abuf, sizeof abuf, "%.1f", (double)s_shown_deg);
+        if (std::strcmp(abuf, "-0.0") == 0) std::strcpy(abuf, "0.0");
+    } else {
+        std::snprintf(abuf, sizeof abuf, "%ld", std::lround(s_shown_deg));
+    }
+    // Size 11 is 198 px wide at 3 chars and would clip the battery. Typical
+    // bevels are 1–2 digits; drop a step only when the string grows. Tenths
+    // add two chars ("17.3"), so those read at size 8 (192 px), still huge.
+    const size_t alen = std::strlen(abuf);
+    const int num_sz = (alen <= 2) ? NUM_SZ : (alen == 3) ? 9 : (alen == 4) ? 8 : 6;
+    // Vertically centre a smaller number in the 88 px band it owns.
+    const int num_y = NUM_Y + (8 * NUM_SZ - 8 * num_sz) / 2;
     if (color_changed || flash_ended
         || !s_last_angle_valid || std::strcmp(abuf, s_last_angle) != 0) {
         M5.Display.fillRect(0, NUM_Y, SCR_W, 8 * NUM_SZ, bg);
-        draw_centered(abuf, NUM_Y, num_sz, COL_WHITE, bg);
+        draw_centered(abuf, num_y, num_sz, COL_WHITE, bg);
         std::strncpy(s_last_angle, abuf, sizeof s_last_angle - 1);
         s_last_angle[sizeof s_last_angle - 1] = '\0';
         s_last_angle_valid = true;
@@ -477,6 +496,33 @@ void draw_battery(int bars, bool charging) {
     }
 }
 
+void draw_ota(int percent, bool first) {
+    static int s_last_pct = -1;
+    if (first) {
+        clear();
+        draw_centered("UPDATING", 12, 3, COL_WHITE, COL_BLACK);
+        draw_centered("Keep the phone close.", 100, 1, COL_WHITE, COL_BLACK);
+        draw_centered("Restarts by itself.", 114, 1, COL_WHITE, COL_BLACK);
+        M5.Display.drawRect(20, 50, 200, 16, COL_WHITE);
+        s_last_pct = -1;
+    }
+    if (percent == s_last_pct) return;
+    s_last_pct = percent;
+    const int w = (196 * (percent < 0 ? 0 : percent > 100 ? 100 : percent)) / 100;
+    M5.Display.fillRect(22, 52, w, 12, COL_GREEN);
+    char buf[8];
+    std::snprintf(buf, sizeof buf, "%d%%", percent);
+    M5.Display.fillRect(0, 72, SCR_W, 16, COL_BLACK);
+    draw_centered(buf, 72, 2, COL_WHITE, COL_BLACK);
+}
+
+void draw_ota_failed() {
+    clear();
+    draw_centered("UPDATE", 30, 3, COL_RED, COL_BLACK);
+    draw_centered("FAILED", 62, 3, COL_RED, COL_BLACK);
+    draw_centered("Old firmware kept. Restarting.", 110, 1, COL_WHITE, COL_BLACK);
+}
+
 void set_backlight(uint8_t percent) {
     // Brightness is an AXP192 I2C register write on this board (bus shared with
     // the MPU6886), so same-value writes must be skipped, not repeated every tick.
@@ -496,7 +542,7 @@ namespace ui {
     void clear() {}
     void draw_boot() {}
     void draw_set_target(float, bool, PresetSelection) {}
-    void draw_set_tolerance(Tolerance, bool) {}
+    void draw_set_tolerance(Tolerance, bool, bool) {}
     void draw_active(const ActiveView&) {}
     void draw_summary(float, Tolerance, uint32_t, uint32_t, uint32_t, uint8_t) {}
     void draw_history(const SessionRecord*, int) {}
@@ -508,6 +554,8 @@ namespace ui {
     void draw_zero_cal_prompt(int, bool) {}
     void draw_zero_cal_progress(int, bool) {}
     void draw_battery(int, bool) {}
+    void draw_ota(int, bool) {}
+    void draw_ota_failed() {}
     void set_backlight(uint8_t) {}
 }
 #endif

@@ -12,6 +12,7 @@
 #include "ui.h"
 #include "feedback.h"
 #include "power.h"
+#include "companion.h"
 
 static App       g_app;
 static InputFSM  g_input;
@@ -28,6 +29,10 @@ void setup() {
     cfg.internal_imu = true;
     cfg.internal_spk = true;
     M5.begin(cfg);
+    // After a software reset (OTA, restart) the panel may not have been
+    // power-cycled; make sure it is out of sleep and lit before first paint.
+    M5.Display.wakeup();
+    M5.Display.setBrightness(255);
     setCpuFrequencyMhz(80);  // 80 MHz is ample for 50 Hz loop; saves ~25 mA
 
     // Safety: refuse to run if this binary was flashed onto a different board than
@@ -95,6 +100,13 @@ void setup() {
 
     g_app.begin(had_session_in_rtc);
 
+    // Companion-app BLE link. After App::begin so the first SETTINGS value it
+    // publishes is the loaded one.
+    companion::begin();
+#ifdef SG_IMU_LOG
+    Serial.begin(115200);
+#endif
+
     // Push initial fault if IMU failed.
     if (fc != FaultCode::NONE) {
         App::Tick t{millis(), InputEvent::NONE, {0,0,-1}, {0,0,0}, fc};
@@ -128,7 +140,7 @@ void loop() {
     static bool pwr_released_since_boot = false;
     if (!pwr_released_since_boot) {
         if (!M5.BtnPWR.isPressed()) pwr_released_since_boot = true;
-    } else if (M5.BtnPWR.wasClicked()) {
+    } else if (M5.BtnPWR.wasClicked() || power::s3_power_key_clicked(now)) {
         // A live session's tick counters exist only in App until flushed; sleep
         // without this loses everything since the last stroke (RTC-RAM write only).
         g_app.flush_session_for_sleep();
@@ -150,18 +162,70 @@ void loop() {
         imu_read_fails = 0;
     }
 
+    power::BatteryView batt = power::battery_sample(now);
+
+    // Firmware update from the companion app: the radio and flash own the
+    // device until it reboots into the new image (or the transfer fails and
+    // we fall back to the session below — App was frozen, not reset).
+    static bool in_ota = false;
+    if (companion::ota_active()) {
+        companion::update(g_app, now, batt);
+        ui::draw_ota(companion::ota_percent(), !in_ota);
+        in_ota = true;
+        ui::set_backlight(100);
+        return;
+    }
+    if (in_ota) {
+        // Transfer dropped or was rejected. The running image is untouched;
+        // restart rather than try to repaint whatever screen App was on.
+        ui::draw_ota_failed();
+        delay(1500);
+        power::restart();
+    }
+
     App::Tick tick{now, ev, accel, gyro, fault};
     g_app.on_tick(tick);
+    companion::update(g_app, now, batt);
+
+#ifdef SG_IMU_LOG
+    // Tuning build only: raw IMU + the firmware's own answer over USB serial,
+    // so candidate filters can be replayed offline against real strokes.
+    if (g_app.current() == State::ACTIVE) {
+        static uint32_t n = 0;
+        if ((n++ % 50) == 0) {
+            const Vec3 f = g_app.g_flat(), e = g_app.edge_axis(), b = g_app.gyro_bias();
+            Serial.printf("C,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.5f,%.5f,%.5f,%.1f\n",
+                          f.x, f.y, f.z, e.x, e.y, e.z, b.x, b.y, b.z, g_app.target_deg());
+        }
+        Serial.printf("I,%lu,%.5f,%.5f,%.5f,%.4f,%.4f,%.4f,%.3f\n",
+                      (unsigned long)micros(), accel.x, accel.y, accel.z,
+                      gyro.x, gyro.y, gyro.z, g_app.live_bevel());
+    }
+#endif
 
     // Battery icon goes on after the state's own draw so it sits on top of any
     // full-screen repaint that tick. Sampling is throttled inside power.
-    power::BatteryView batt = power::battery_sample(now);
     ui::draw_battery(batt.bars, batt.charging);
 
-    // Sleep check uses App's real last-activity / last-stroke timestamps.
+    // A connected companion app counts as activity, so the stick doesn't power
+    // off under someone watching the phone — but only for LINK_AWAKE_MAX_MS
+    // after the last real activity, so a phone left connected can't drain the
+    // cell. The backlight still dims on App's own timestamps (below).
+    static constexpr uint32_t LINK_AWAKE_MAX_MS = 30u * 60u * 1000u;
+    uint32_t idle_activity_ms = g_app.last_activity_ms();
+    uint32_t idle_stroke_ms   = g_app.last_stroke_ms();
+    if (companion::connected()) {
+        const uint32_t since_activity = now - g_app.last_activity_ms();
+        const uint32_t since_stroke   = now - g_app.last_stroke_ms();
+        const uint32_t since_real     = since_activity < since_stroke ? since_activity : since_stroke;
+        if (since_real < LINK_AWAKE_MAX_MS) idle_activity_ms = idle_stroke_ms = now;
+    }
+
+    // Sleep check uses App's real last-activity / last-stroke timestamps
+    // (or "now" while the companion app holds the stick awake).
     if (power::check_idle(now, g_app.current(),
-                          g_app.last_activity_ms(),
-                          g_app.last_stroke_ms())) {
+                          idle_activity_ms,
+                          idle_stroke_ms)) {
         // Same as the BtnPWR path: don't drop unflushed session ticks. The
         // State::SLEEP path below deliberately does NOT flush — that session
         // was already closed and cleared by SUMMARY.

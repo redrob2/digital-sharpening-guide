@@ -24,6 +24,16 @@ _▶️ Holding the target angle on a whetstone — screen stays green. [Watch t
 
 ---
 
+## What's new in v1.2.0 (redrob2 fork)
+
+- **Tenths of a degree, optional.** A-hold on the TOLERANCE screen (or the app) switches the live angle between `17` and `17.3`. Steady mode still holds the shown value against chatter, just one decade finer.
+- **14° preset, and the stick remembers your target.** `B` opens the presets on 14° and cycles **14° / 15° / 17° / 20° / 22° / 25° / 28° / CANCEL / 12°**. The last target you picked (on the stick or in the app) is what the stick starts on next time; a new stick starts at 14°.
+- **StickS3 power button: press = off, press = on.** The S3 power chip used to reset the stick on every single click (its factory default), so it could never be turned off with one press. The firmware now disables that reset and powers off cleanly on a short press; double-click power-off still works as a hardware fallback.
+- **Colour follows the number.** The band-edge stickiness dropped from 0.7° to 0.3° (0.15° in tenths mode).
+- **Steadier angle while stroking.** The filter no longer snaps to the accelerometer at stroke turnarounds (that caused 10–30° jumps), and it leans on the gyro while the stick is moving. On a recorded session of short quick strokes the per-second error dropped from 0.7–1.3° to 0.3–0.5°.
+- **Darker "on angle" green.** The full-screen green is now ~70% (#00B200) so the white number on it has real contrast.
+- **Android companion app** ([`android/`](android/)). Mirrors the stick live over Bluetooth LE on a phone or tablet (same colour, a much bigger number, ~50 updates a second), lets you change target / tolerance / buzzer / steady / tenths from the phone, and updates the stick's firmware over the air from GitHub Releases or a `.bin` on the phone. Protocol: [`docs/companion-protocol.md`](docs/companion-protocol.md).
+
 ## What's new in v1.1.2
 
 **The coach starts on the angle you just raised to. The number is bigger.**
@@ -182,7 +192,7 @@ Once flashed, the device walks you through everything on-screen. A full session:
 1. **Power on.** You'll see a `SHARPENING GUIDE` splash, then `SET TARGET`.
 2. **Set your target angle.** Either:
    - hold the device at the angle you want and press **A** to capture it, **or**
-   - press **B** to cycle the presets (12° / 15° / 17° / 20° / 22° / 25° / 28°) and press **A** to pick one.
+   - press **B** to cycle the presets (14° / 15° / 17° / 20° / 22° / 25° / 28°, then 12°) and press **A** to pick one.
 3. **Set tolerance.** Press **B** to cycle `TIGHT ±2°` / `NORMAL ±3°` / `EASY ±5°`, then **A** to confirm. (Start with NORMAL or EASY.)
 4. **Zero-calibrate (2 quick steps).** This is what makes it angle-accurate regardless of how the device is rotated on the blade:
    - **Step 1/2 — "Lay flat on stone":** rest the blade flat on your stone, press **A**, hold still for the countdown.
@@ -197,10 +207,24 @@ Once flashed, the device walks you through everything on-screen. A full session:
 
 | Button | Short press | Long press |
 |---|---|---|
-| **A** (front) | confirm / capture / **switch blade side** (ACTIVE) | **end session** (→ summary) / **accuracy check** (SET TARGET) |
+| **A** (front) | confirm / capture / **switch blade side** (ACTIVE) | **end session** (→ summary) / **accuracy check** (SET TARGET) / **tenths of a degree on/off** (TOLERANCE) |
 | **B** (side) | cycle option / **re-zero** (ACTIVE) / force-capture during a countdown | **toggle buzzer** (ACTIVE) / **toggle steady mode** (TOLERANCE) / **session history** (SUMMARY) |
-| **Power** (left side) | sleep / wake | hold 6 s = full power-off (AXP192 / Plus only — see note below) |
+| **Power** (left side) | sleep / wake (Plus, Plus2); on the **StickS3** a short press powers the stick off and the next press powers it on with a fresh start (no resume) | hold 6 s = full power-off (AXP192 / Plus only — see note below) |
 
+
+**Screen by screen** (a long press is about 0.8 s):
+
+| Screen | A short | A long | B short | B long |
+|---|---|---|---|---|
+| SET TARGET (starts on the last target you used; 14° on a new stick) | confirm the target | accuracy check | open / step through presets (14 / 15 / 17 / 20 / 22 / 25 / 28 / CANCEL / 12); A then picks | — |
+| TOLERANCE | confirm, go to zero-cal | tenths of a degree on/off | cycle TIGHT ±2° / NORMAL ±3° / EASY ±5° | steady mode on/off |
+| ZERO CAL (flat, then raise) | start the capture | back to SET TARGET | during a countdown: capture now | — |
+| Coaching (coloured screen) | switch blade side A/B | end session → summary | re-zero (lay flat again) | buzzer on/off |
+| RE-ZERO (capture starts by itself) | — | cancel, back to coaching | capture now | — |
+| SUMMARY | new session | — | power off | past sessions |
+| PAST SESSIONS | back | back | back | back |
+| ACCURACY CHECK | start the flat capture | back to SET TARGET | back to SET TARGET | — |
+| RESUME? (Plus/Plus2 wake; starts a new session by itself after 5 s) | resume the session | — | start a new one | — |
 
 > ⚠️ The "hold 6 s = full power-off" behavior is AXP192-specific and applies to the **M5StickC Plus** only. On the **Plus2** and **S3**, the power button is managed by the board's own power IC through M5Unified; the long-hold power-off behavior may differ slightly.
 

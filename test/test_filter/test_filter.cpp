@@ -99,6 +99,59 @@ void test_should_not_snap_during_linear_accel(void) {
         {0.0f, 0.0f, -1.0f}, {0.6f, 0.0f, -1.3f}, {0.0f, 0.0f, 0.0f}));
 }
 
+void test_motion_gate_holds_angle_through_strokes(void) {
+    // 10 deg pose at rest, then strokes: 0.2 s of +0.3 g along x, 0.2 s of
+    // -0.3 g (brake), 0.2 s coasting, repeated for 6 s. The gyro reports no
+    // rotation throughout, so the estimate should stay put.
+    const Vec3 rest = {0.0f, 0.1736f, -0.9848f};
+    auto worst_error_deg = [&](float tau) {
+        MahonyFilter f;
+        f.begin(50.0f, 0.8f, 0.02f);
+        f.set_accel_tau(tau);
+        f.nudge_to_gravity(rest);
+        float worst = 0.0f;
+        for (int i = 0; i < 300; i++) {
+            const int   ph = i % 30;
+            const float x  = (ph < 10) ? 0.3f : (ph < 20) ? -0.3f : 0.0f;
+            f.update({0.0f, 0.0f, 0.0f}, {x, rest.y, rest.z});
+            const Vec3 g = f.gravity();
+            float d = g.x*rest.x + g.y*rest.y + g.z*rest.z;
+            if (d > 1.0f) d = 1.0f;
+            const float err = std::acos(d) * 57.29578f;
+            if (err > worst) worst = err;
+        }
+        return worst;
+    };
+    const float gated = worst_error_deg(0.7f);
+    // Offline model: 0.34 deg gated, 0.70 deg with the low-pass alone,
+    // 2.5 deg raw. Leave margin, but fail if the gate stops working.
+    TEST_ASSERT_TRUE(gated < 0.5f);
+    // Raw mode (tau = 0) has neither the low-pass nor the gate.
+    TEST_ASSERT_TRUE(worst_error_deg(0.0f) > 3.0f * gated);
+}
+
+void test_still_gate_needs_sustained_rest(void) {
+    mahony::StillGate g;
+    const Vec3 rest = {0.0f, 0.1736f, -0.9848f};       // 10 deg, at rest
+    for (int i = 0; i < mahony::SNAP_STILL_TICKS - 1; i++) {
+        TEST_ASSERT_FALSE(g.update(rest, {0.0f, 0.0f, 0.0f}));
+    }
+    TEST_ASSERT_TRUE(g.update(rest, {0.0f, 0.0f, 0.0f}));
+}
+
+void test_still_gate_rejects_stroke_turnaround(void) {
+    // 1.5 Hz sweep of 0.25 g along x on top of gravity, gyro ~0 throughout:
+    // every single sample would pass should_snap's one-tick test near the
+    // turnarounds, but the raw accel never holds still for long.
+    mahony::StillGate g;
+    bool fired = false;
+    for (int i = 0; i < 500; i++) {
+        const float s = 0.25f * std::sin(2.0f * 3.14159265f * 1.5f * (i * 0.02f));
+        fired |= g.update({s, 0.1736f, -0.9848f}, {0.0f, 0.0f, 0.0f});
+    }
+    TEST_ASSERT_FALSE(fired);
+}
+
 void test_snap_does_not_repeat_on_steady_accel(void) {
     // After a snap aligns the filter to a still pose, should_snap must report
     // false on the next steady tick — otherwise it would re-fire every tick.
@@ -252,6 +305,9 @@ int main(int, char**) {
     RUN_TEST(test_should_not_snap_when_aligned);
     RUN_TEST(test_should_not_snap_during_linear_accel);
     RUN_TEST(test_snap_does_not_repeat_on_steady_accel);
+    RUN_TEST(test_motion_gate_holds_angle_through_strokes);
+    RUN_TEST(test_still_gate_needs_sustained_rest);
+    RUN_TEST(test_still_gate_rejects_stroke_turnaround);
     RUN_TEST(test_accel_lp_cuts_stroke_wobble);
     RUN_TEST(test_accel_lp_still_converges_to_gravity);
     RUN_TEST(test_accel_tau_zero_is_legacy_behaviour);

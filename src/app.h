@@ -4,6 +4,7 @@
 #include "side.h"
 #include "filter.h"
 #include "zero_cal.h"
+#include "settings.h"
 
 class App {
 public:
@@ -29,6 +30,30 @@ public:
     Tolerance tolerance()        const { return tol_; }
     bool      buzzer_on()        const { return buzzer_on_; }
     bool      steady_on()        const { return steady_; }
+    bool      tenths_on()        const { return tenths_; }
+
+    // ---- Companion-app link (BLE) ------------------------------------------
+    // Settings the app can change. Applied from the main loop only (the BLE
+    // stack queues writes; it never calls into App from its own task).
+    struct RemoteSettings {
+        float     target_deg;
+        Tolerance tol;
+        bool      buzzer;
+        bool      steady;
+        bool      tenths;
+    };
+    void      apply_remote_settings(const RemoteSettings& s, uint32_t now_ms);
+    RemoteSettings current_settings() const {
+        return { target_deg_, tol_, buzzer_on_, steady_, tenths_ };
+    }
+    // Bumped every time any of the settings above change (on-device or
+    // remote), so the link knows when to notify the app.
+    uint32_t  settings_rev()     const { return settings_rev_; }
+    // The number the stick is showing right now, if this screen shows one
+    // (SET_TARGET: the target, ACTIVE: live bevel, VERIFY: the check reading).
+    bool      live_angle(float& out_deg) const;
+    // Classification behind the ACTIVE background; false when not coaching.
+    bool      live_color(ColorState& out) const;
     Vec3      gyro_bias()        const { return filter_.bias(); }
     uint32_t  strokes_a()        const { return strokes_a_; }
     uint32_t  strokes_b()        const { return strokes_b_; }
@@ -76,12 +101,16 @@ private:
     uint32_t         last_activity_ms_     = 0;
     uint32_t         last_stroke_ms_       = 0;
 
-    float            target_deg_           = 17.0f;
+    float            target_deg_           = settings::kDefaultTargetDeg;
     Tolerance        tol_                  = Tolerance::NORMAL;
     bool             buzzer_on_            = false;
     // Steady mode (A/B switch, on by default): accel-reference smoothing in the filter plus
     // display and colour hysteresis. Toggled by B-hold on the TOLERANCE screen.
     bool             steady_               = true;
+    // Live ACTIVE angle at 0.1 deg (A-hold on the TOLERANCE screen, or the app).
+    bool             tenths_               = false;
+    uint32_t         settings_rev_         = 0;
+    float            last_bevel_           = 0.0f;   // last ACTIVE bevel, for the link
 
     void apply_steady_();   // push steady_ into the filter's accel time constant
     // Nudge the gyro bias toward the measured rate whenever the device is
@@ -108,6 +137,8 @@ private:
     // Counts down ACTIVE ticks during which snap-to-raw recovery is suppressed
     // after a snap fires (see handle_active).
     uint8_t          snap_cooldown_        = 0;
+    // Snap only after sustained rest, never at a stroke turnaround.
+    mahony::StillGate snap_gate_;
 
     // VERIFY: a flat reference captured just for the accuracy check, kept
     // separate from g_flat_ so checking never disturbs a live session's zero.
@@ -135,7 +166,9 @@ private:
     uint32_t         active_ticks_         = 0;
 
     bool             in_preset_mode_       = false;
-    PresetSelection  preset_selection_     = PresetSelection::P12;
+    // B opens the presets on 14 (the default target), then steps up; 12 comes
+    // round after CANCEL.
+    PresetSelection  preset_selection_     = PresetSelection::P14;
 
     uint32_t         buzzer_flash_until_   = 0;
     bool             buzzer_flash_showing_ = false;

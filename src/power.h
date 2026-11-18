@@ -21,6 +21,18 @@ namespace power {
                           uint32_t last_activity_ms, uint32_t last_stroke_ms);
 
     [[noreturn]] void enter_deep_sleep();
+    // StickS3 only: how long to wait after going dark before telling the PMIC
+    // to shut down, so the triggering power-key press is over (see power.cpp).
+    constexpr uint32_t S3_POWEROFF_SETTLE_MS = 300;
+
+    // StickS3 only (always false elsewhere): true once per completed short
+    // press of the power key, read straight from the PMIC's button-status
+    // register. Call every tick; it rate-limits its own I2C reads.
+    bool s3_power_key_clicked(uint32_t now_ms);
+
+    // Restart the stick. On the StickS3 this goes through the PMIC so the
+    // display is power-cycled too; elsewhere it is a plain chip restart.
+    void restart();
 
     // ---- Battery indicator -------------------------------------------------
     struct BatteryView {

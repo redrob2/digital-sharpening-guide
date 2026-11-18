@@ -12,6 +12,7 @@ void MahonyFilter::begin(float sample_hz, float kp, float ki) {
     ki_ = ki;
     dt_ = 1.0f / sample_hz;
     a_lp_valid_ = false;   // drop the smoothed accel; a_tau_ (a config) survives
+    motion_hold_ = 0;
 }
 
 void MahonyFilter::reset() {
@@ -40,7 +41,20 @@ void MahonyFilter::update(Vec3 gyro_dps, Vec3 accel_g) {
             a_lp_.z += al * (accel_g.z - a_lp_.z);
         }
         a_ref = a_lp_;
+
+        // Motion gate. The raw accel departing from its own slow average means
+        // the device is being pushed around (a stroke) or re-oriented; in both
+        // cases the accelerometer is the wrong thing to steer by and the gyro
+        // is the right one. Hold the verdict for MOTION_HOLD_TICKS so the gate
+        // does not flicker open at every stroke turnaround.
+        const float dx = accel_g.x - a_lp_.x, dy = accel_g.y - a_lp_.y, dz = accel_g.z - a_lp_.z;
+        if (dx*dx + dy*dy + dz*dz > mahony::MOTION_DEV_G * mahony::MOTION_DEV_G) {
+            motion_hold_ = mahony::MOTION_HOLD_TICKS;
+        } else if (motion_hold_ > 0) {
+            --motion_hold_;
+        }
     } else {
+        motion_hold_ = 0;   // raw mode (steady off): the pre-gate behaviour, for A/B
         // Smoothing off: keep the raw sample so accel_reference() honours its
         // contract (last raw accel) instead of reporting {0,0,0} to diagnostics.
         a_lp_       = accel_g;
@@ -64,18 +78,23 @@ void MahonyFilter::update(Vec3 gyro_dps, Vec3 accel_g) {
         float ey = -(az*vx - ax*vz);
         float ez = -(ax*vy - ay*vx);
 
+        const bool moving = motion_hold_ > 0;
         if (ki_ > 0.0f) {
-            ix_ += ki_ * ex * dt_;
-            iy_ += ki_ * ey * dt_;
-            iz_ += ki_ * ez * dt_;
+            // Do not learn "bias" from a stroke: freeze the integral while moving.
+            if (!moving) {
+                ix_ += ki_ * ex * dt_;
+                iy_ += ki_ * ey * dt_;
+                iz_ += ki_ * ez * dt_;
+            }
             gx += ix_;
             gy += iy_;
             gz += iz_;
         }
 
-        gx += kp_ * ex;
-        gy += kp_ * ey;
-        gz += kp_ * ez;
+        const float kp = moving ? kp_ * mahony::MOTION_KP_SCALE : kp_;
+        gx += kp * ex;
+        gy += kp * ey;
+        gz += kp * ez;
     }
 
     gx *= 0.5f * dt_;
@@ -128,6 +147,7 @@ void MahonyFilter::nudge_to_gravity(Vec3 accel_g) {
     // pre-snap history and would drag the freshly re-anchored orientation back.
     a_lp_       = accel_g;
     a_lp_valid_ = true;
+    motion_hold_ = 0;
 }
 
 bool mahony::should_snap(Vec3 g_filter, Vec3 accel_g, Vec3 gyro_dps) {
@@ -145,4 +165,20 @@ bool mahony::should_snap(Vec3 g_filter, Vec3 accel_g, Vec3 gyro_dps) {
     if (d < -1.0f) d = -1.0f;
     float div_deg = std::acos(d) * (180.0f / (float)M_PI);
     return div_deg >= SNAP_DIVERGENCE_DEG;
+}
+
+bool mahony::StillGate::update(Vec3 a, Vec3 g) {
+    const float gyro_mag = std::sqrt(g.x*g.x + g.y*g.y + g.z*g.z);
+    const float a_mag    = std::sqrt(a.x*a.x + a.y*a.y + a.z*a.z);
+    bool still = gyro_mag < SNAP_GYRO_DPS
+              && std::fabs(a_mag - 1.0f) < SNAP_STILL_ACCEL_TOL;
+    if (still && have_prev_) {
+        const float dx = a.x - prev_.x, dy = a.y - prev_.y, dz = a.z - prev_.z;
+        still = std::sqrt(dx*dx + dy*dy + dz*dz) < SNAP_STILL_ACCEL_DELTA;
+    }
+    prev_      = a;
+    have_prev_ = true;
+    if (!still) { ticks_ = 0; return false; }
+    if (ticks_ < SNAP_STILL_TICKS) ++ticks_;
+    return ticks_ >= SNAP_STILL_TICKS;
 }

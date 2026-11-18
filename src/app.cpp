@@ -20,7 +20,8 @@ static inline Vec3 normalized(Vec3 v) {
 
 static PresetSelection next_preset(PresetSelection p) {
     switch (p) {
-        case PresetSelection::P12:    return PresetSelection::P15;
+        case PresetSelection::P12:    return PresetSelection::P14;
+        case PresetSelection::P14:    return PresetSelection::P15;
         case PresetSelection::P15:    return PresetSelection::P17;
         case PresetSelection::P17:    return PresetSelection::P20;
         case PresetSelection::P20:    return PresetSelection::P22;
@@ -123,6 +124,8 @@ void App::begin(bool had_session_in_rtc_ram) {
     buzzer_on_ = settings::load_buzzer();
     tol_       = settings::load_tolerance();
     steady_    = settings::load_steady();
+    tenths_    = settings::load_tenths();
+    target_deg_ = settings::load_target();   // last target used; a resumed session overrides it below
     apply_steady_();
 
     // Wake-from-sleep path. RTC RAM only survives deep sleep (battery pull
@@ -172,10 +175,10 @@ void App::transition(State to, uint32_t now_ms) {
         case State::BOOT:          ui::draw_boot(); break;
         case State::SET_TARGET:
             in_preset_mode_   = false;
-            preset_selection_ = PresetSelection::P12;
+            preset_selection_ = PresetSelection::P14;
             ui::draw_set_target(target_deg_, in_preset_mode_, preset_selection_);
             break;
-        case State::SET_TOLERANCE: ui::draw_set_tolerance(tol_, steady_); break;
+        case State::SET_TOLERANCE: ui::draw_set_tolerance(tol_, steady_, tenths_); break;
         case State::ZERO_CAL:
             // Invalidate the ACTIVE dirty-region cache here rather than relying on
             // every predecessor screen having cleared it on its way out.
@@ -437,11 +440,13 @@ void App::handle_set_target(const Tick& t) {
                 last_activity_ms_ = t.now_ms;
             } else {
                 target_deg_ = preset_degrees(preset_selection_);
+                settings::save_target(target_deg_);
+                ++settings_rev_;
                 transition(State::SET_TOLERANCE, t.now_ms);
             }
         } else {
             // Freehand path removed (world-horizontal assumption gone).
-            // target_deg_ keeps its current value (default 17.0f or last preset).
+            // target_deg_ keeps its current value (the last one used, 14 on a new stick).
             transition(State::SET_TOLERANCE, t.now_ms);
         }
     } else if (t.input == InputEvent::A_LONG) {
@@ -453,7 +458,7 @@ void App::handle_set_target(const Tick& t) {
     } else if (t.input == InputEvent::B_SHORT) {
         if (!in_preset_mode_) {
             in_preset_mode_   = true;
-            preset_selection_ = PresetSelection::P12;
+            preset_selection_ = PresetSelection::P14;
         } else {
             preset_selection_ = next_preset(preset_selection_);
         }
@@ -469,16 +474,25 @@ void App::handle_set_target(const Tick& t) {
 void App::handle_set_tolerance(const Tick& t) {
     if (t.input == InputEvent::B_SHORT) {
         tol_ = next_tolerance(tol_);
+        ++settings_rev_;
         last_activity_ms_ = t.now_ms;
-        ui::draw_set_tolerance(tol_, steady_);
+        ui::draw_set_tolerance(tol_, steady_, tenths_);
     } else if (t.input == InputEvent::B_LONG) {
         // Beta A/B switch: flip steady mode without reflashing, so one device can
         // be compared against itself in the same session.
         steady_ = !steady_;
         settings::save_steady(steady_);
         apply_steady_();
+        ++settings_rev_;
         last_activity_ms_ = t.now_ms;
-        ui::draw_set_tolerance(tol_, steady_);
+        ui::draw_set_tolerance(tol_, steady_, tenths_);
+    } else if (t.input == InputEvent::A_LONG) {
+        // Whole degrees vs tenths on the live ACTIVE readout.
+        tenths_ = !tenths_;
+        settings::save_tenths(tenths_);
+        ++settings_rev_;
+        last_activity_ms_ = t.now_ms;
+        ui::draw_set_tolerance(tol_, steady_, tenths_);
     } else if (t.input == InputEvent::A_SHORT) {
         settings::save_tolerance(tol_);
         // confirm tolerance, persist, advance into ZERO_CAL.
@@ -504,9 +518,10 @@ void App::sample_live_(const Tick& t, float& bevel, float& lat, ColorState& col)
     apply_adaptive_tau_(t);
     filter_.update(t.gyro_dps, t.accel_g);
     refresh_bias_if_still_(t.accel_g, t.gyro_dps);
+    const bool at_rest = snap_gate_.update(t.accel_g, t.gyro_dps);
     if (snap_cooldown_ > 0) {
         --snap_cooldown_;
-    } else if (mahony::should_snap(filter_.gravity(), t.accel_g, t.gyro_dps)) {
+    } else if (at_rest && mahony::should_snap(filter_.gravity(), t.accel_g, t.gyro_dps)) {
         filter_.nudge_to_gravity(t.accel_g);
         snap_cooldown_ = mahony::SNAP_COOLDOWN_TICKS;
     }
@@ -515,7 +530,9 @@ void App::sample_live_(const Tick& t, float& bevel, float& lat, ColorState& col)
     lat   = lateral_accel_g(t.accel_g, g_now);
     col   = classify(bevel, target_deg_, tolerance_degrees(tol_),
                      prev_color_,
-                     (steady_ && color_valid_) ? CLASSIFY_HYSTERESIS_DEG : 0.0f);
+                     (steady_ && color_valid_)
+                         ? (tenths_ ? CLASSIFY_HYSTERESIS_TENTHS_DEG : CLASSIFY_HYSTERESIS_DEG)
+                         : 0.0f);
 }
 
 void App::handle_active(const Tick& t) {
@@ -574,6 +591,7 @@ void App::handle_active(const Tick& t) {
     if (t.input == InputEvent::B_LONG) {
         buzzer_on_ = !buzzer_on_;
         settings::save_buzzer(buzzer_on_);
+        ++settings_rev_;
         if (buzzer_on_) feedback::beep_confirm();
         buzzer_flash_until_   = t.now_ms + 800;
         buzzer_flash_showing_ = true;
@@ -595,7 +613,9 @@ void App::handle_active(const Tick& t) {
                       buzzer_flash_showing_, buzzer_on_,
                       bevel, steady_,
                       bevel - target_deg_,
-                      tolerance_degrees(tol_) };
+                      tolerance_degrees(tol_),
+                      tenths_ };
+    last_bevel_ = bevel;
     ui::draw_active(v);
 }
 
@@ -735,8 +755,9 @@ void App::handle_verify(const Tick& t) {
     }
 
     filter_.update(t.gyro_dps, t.accel_g);
+    const bool at_rest = snap_gate_.update(t.accel_g, t.gyro_dps);
     if (snap_cooldown_ > 0) --snap_cooldown_;
-    else if (mahony::should_snap(filter_.gravity(), t.accel_g, t.gyro_dps)) {
+    else if (at_rest && mahony::should_snap(filter_.gravity(), t.accel_g, t.gyro_dps)) {
         filter_.nudge_to_gravity(t.accel_g);
         snap_cooldown_ = mahony::SNAP_COOLDOWN_TICKS;
     }
@@ -797,5 +818,65 @@ void App::on_tick(const Tick& t) {
         case State::RESUME_PROMPT: handle_resume_prompt(t); break;
         case State::FAULT:         break;
         case State::SLEEP:         break;
+    }
+}
+
+bool App::live_angle(float& out_deg) const {
+    switch (state_) {
+        case State::SET_TARGET:
+            out_deg = (in_preset_mode_ && preset_selection_ != PresetSelection::CANCEL)
+                    ? preset_degrees(preset_selection_) : target_deg_;
+            return !(in_preset_mode_ && preset_selection_ == PresetSelection::CANCEL);
+        case State::ACTIVE:
+            if (!color_valid_) return false;
+            out_deg = last_bevel_;
+            return true;
+        case State::VERIFY:
+            if (!verify_captured_) return false;
+            out_deg = verify_reading_deg_;
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool App::live_color(ColorState& out) const {
+    if (state_ != State::ACTIVE || !color_valid_) return false;
+    out = prev_color_;
+    return true;
+}
+
+void App::apply_remote_settings(const RemoteSettings& s, uint32_t now_ms) {
+    float tgt = s.target_deg;
+    if (!(tgt >= 5.0f)) tgt = 5.0f;     // also catches NaN
+    if (tgt > 45.0f)    tgt = 45.0f;
+    const bool tol_changed    = s.tol    != tol_;
+    const bool steady_changed = s.steady != steady_;
+    target_deg_ = tgt;
+    settings::save_target(target_deg_);
+    tol_        = s.tol;
+    if (s.buzzer != buzzer_on_) { buzzer_on_ = s.buzzer; settings::save_buzzer(buzzer_on_); }
+    if (steady_changed)         { steady_ = s.steady; settings::save_steady(steady_); apply_steady_(); }
+    if (s.tenths != tenths_)    { tenths_ = s.tenths; settings::save_tenths(tenths_); }
+    if (tol_changed)            settings::save_tolerance(tol_);
+    ++settings_rev_;
+    last_activity_ms_ = now_ms;
+
+    // Repaint screens that show these values. ACTIVE repaints itself next
+    // tick (colour/number follow the new target and tenths); a resumable
+    // session keeps the new target/tolerance on its next stroke save.
+    switch (state_) {
+        case State::SET_TARGET:
+            ui::draw_set_target(target_deg_, in_preset_mode_, preset_selection_);
+            break;
+        case State::SET_TOLERANCE:
+            ui::draw_set_tolerance(tol_, steady_, tenths_);
+            break;
+        case State::ACTIVE:
+            ui::clear();            // full repaint against the new target/format
+            save_session_();
+            break;
+        default:
+            break;
     }
 }
