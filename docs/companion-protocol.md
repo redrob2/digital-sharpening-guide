@@ -67,7 +67,9 @@ A merged web-flasher image (`sharpening-guide-<board>-v<ver>.bin`, which has
 a partition table at offset 0x8000 — bytes `AA 50`) must have its first
 0x10000 bytes stripped by the app first.
 
-Every firmware build embeds the ASCII tag `SG-BOARD:<PLUS|PLUS2|S3>;`. The app
+Every firmware build embeds the ASCII tags `SG-BOARD:<PLUS|PLUS2|S3>;` and
+`SG-FW:<version>;` (for example `SG-FW:1.2.0;`), the second so the app can show
+a file's version before sending it. The app
 must find that tag in the image and refuse to send it if it doesn't match
 INFO's `board`.
 

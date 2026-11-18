@@ -37,6 +37,14 @@ class FirmwareImageTest {
         assertEquals(CRC32().apply { update(img) }.value, r.crc32)
     }
 
+    @Test fun fwTagBeatsTheIdfDescriptorVersion() {
+        // Real Arduino builds put the IDF version in the descriptor; the SG-FW tag is the truth.
+        val img = appImage("S3", version = "esp-idf: v4.4.7 38eeba213a")
+        "SG-FW:1.2.0;".toByteArray().copyInto(img, 600)
+        assertEquals("1.2.0", FirmwareImage.appVersion(img))
+        assertEquals("1.2.0", (FirmwareImage.prepare(img, "S3") as OtaPrep.Ok).version)
+    }
+
     @Test fun mergedImageIsStripped() {
         val app = appImage("PLUS2")
         val r = FirmwareImage.prepare(merged(app), "plus2") as OtaPrep.Ok

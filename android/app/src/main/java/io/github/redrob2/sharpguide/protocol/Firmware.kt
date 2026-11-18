@@ -56,12 +56,34 @@ object FirmwareImage {
      * the first 8-byte segment header: magic 0xABCD5432 at offset 32, version[32] at 48.
      */
     fun appVersion(img: ByteArray): String? {
+        // Sharpening Guide builds carry their own "SG-FW:<version>;" tag. Prefer
+        // it: Arduino builds put the IDF version in the descriptor field below.
+        fwTag(img)?.let { return it }
         if (img.size < 80) return null
         val magic = u16(img, 32).toLong() or (u16(img, 34).toLong() shl 16)
         if (magic != 0xABCD5432L) return null
         var end = 48
         while (end < 80 && img[end] != 0.toByte()) end++
         return String(img, 48, end - 48, Charsets.US_ASCII).ifBlank { null }
+    }
+
+    /** The version from the first "SG-FW:<version>;" tag, or null if there is none. */
+    fun fwTag(b: ByteArray): String? {
+        val key = "SG-FW:".toByteArray(Charsets.US_ASCII)
+        var i = 0
+        outer@ while (i <= b.size - key.size) {
+            for (k in key.indices) {
+                if (b[i + k] != key[k]) { i++; continue@outer }
+            }
+            val start = i + key.size
+            var j = start
+            while (j < b.size && j - start < 24 && b[j] != ';'.code.toByte() && b[j].toInt() in 0x21..0x7E) j++
+            if (j < b.size && b[j] == ';'.code.toByte() && j > start) {
+                return String(b, start, j - start, Charsets.US_ASCII)
+            }
+            i = start
+        }
+        return null
     }
 
     fun prepare(raw: ByteArray, stickBoard: String): OtaPrep {

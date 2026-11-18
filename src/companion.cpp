@@ -28,6 +28,10 @@
 // receiver) can tell which stick an image was built for. Plus and Plus2 are
 // both plain ESP32s, so the image header's chip id cannot tell them apart.
 extern "C" __attribute__((used)) const char kSgBoardTag[] = "SG-BOARD:" SG_BOARD_NAME ";";
+// Same idea for the version: the app shows this for a file before uploading
+// it. (The ESP-IDF app descriptor's version field is no use here; Arduino
+// builds fill it with the IDF version.)
+extern "C" __attribute__((used)) const char kSgFwTag[] = "SG-FW:" SG_FW_VERSION ";";
 
 namespace {
 
@@ -289,6 +293,10 @@ void begin() {
     s_settings->setCallbacks(new SettingsCb());
     NimBLECharacteristic* info = svc->createCharacteristic(INFO_UUID, NIMBLE_PROPERTY::READ);
     // std::string, not the literal: the const char[N] overload sends the NUL too.
+    // Referenced so the linker's section GC keeps the tag in the image
+    // (the `used` attribute alone does not survive --gc-sections here).
+    static const char* volatile s_keep_fw_tag = kSgFwTag;
+    (void)s_keep_fw_tag;
     const esp_partition_t* running = esp_ota_get_running_partition();
     info->setValue(std::string("fw=" SG_FW_VERSION ";board=" SG_BOARD_NAME ";proto=1;slot=")
                    + (running ? running->label : "?"));
