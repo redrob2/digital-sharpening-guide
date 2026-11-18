@@ -92,6 +92,9 @@ data class LiveFrame(
     val steady: Boolean get() = flags and 0x02 != 0
     val tenths: Boolean get() = flags and 0x04 != 0
     val charging: Boolean get() = flags and 0x08 != 0
+
+    /** Too little charge to survive a firmware update: empty bar and not on USB. */
+    val tooLowForUpdate: Boolean get() = batteryBars == 0 && !charging
     val strokesCurrentSide: Int get() = if (sideB) strokesB else strokesA
 
     companion object {
@@ -199,6 +202,7 @@ object Ota {
         2 -> "flash error"
         3 -> "size/CRC mismatch"
         4 -> "wrong chip"
+        5 -> "battery too low, plug the stick in"
         else -> "status $status"
     }
 }

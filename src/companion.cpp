@@ -44,7 +44,8 @@ constexpr const char* OTA_DATA_UUID = "5347a011-0b1e-4a6c-9d2e-6b6e69666521";
 
 constexpr uint8_t PROTO_VERSION = 1;
 
-enum OtaStatus : uint8_t { OK = 0, BAD_STATE = 1, FLASH_ERR = 2, MISMATCH = 3, WRONG_BOARD = 4 };
+enum OtaStatus : uint8_t { OK = 0, BAD_STATE = 1, FLASH_ERR = 2, MISMATCH = 3, WRONG_BOARD = 4,
+                            LOW_BATTERY = 5 };
 enum OtaCmd    : uint8_t { BEGIN = 0x01, END = 0x03, ABORT = 0x05, RESTART = 0x07 };
 
 NimBLEServer*         s_server   = nullptr;
@@ -53,6 +54,9 @@ NimBLECharacteristic* s_settings = nullptr;
 NimBLECharacteristic* s_ota_ctrl = nullptr;
 
 volatile int  s_conn_count = 0;            // phone and PC can both be connected
+// Latest battery view from the main loop, for the OTA gate (BLE task reads it).
+volatile int8_t s_batt_bars     = -1;       // 0..4, -1 unknown
+volatile bool   s_batt_powered  = false;   // charging or on USB power
 volatile uint16_t s_ota_conn = 0xFFFF;      // connection that owns the OTA transfer
 // Newest connection, and when to ask it for a faster link (0 = nothing pending).
 volatile uint16_t s_new_conn       = 0xFFFF;
@@ -177,6 +181,13 @@ class OtaCtrlCb : public NimBLECharacteristicCallbacks {
             case BEGIN: {
                 ota_abort();
                 if (v.length() < 5) { ota_reply(BEGIN, BAD_STATE); return; }
+                // An update is ~1 min of radio plus flash erase/write. On an
+                // empty cell that browns the stick out mid-transfer (seen: 0
+                // bars, on battery, died right after an update). The old image
+                // would survive, but refuse up front and say why. Unknown
+                // level (-1) is allowed: no reading is not "empty". On USB
+                // power the cell does not matter.
+                if (s_batt_bars == 0 && !s_batt_powered) { ota_reply(BEGIN, LOW_BATTERY); return; }
                 const uint32_t size = rd_u32(d + 1);
                 const esp_partition_t* part = esp_ota_get_next_update_partition(nullptr);
                 if (!part || size == 0 || size > part->size) { ota_reply(BEGIN, MISMATCH); return; }
@@ -321,6 +332,8 @@ void begin() {
 }
 
 void update(App& app, uint32_t now_ms, const power::BatteryView& batt) {
+    s_batt_bars     = (int8_t)batt.bars;
+    s_batt_powered  = batt.charging || batt.usb_power;
     if (s_reboot_at && (int32_t)(millis() - s_reboot_at) >= 0) {
         // Never reset the chip mid-transfer to the LCD: a panel left halfway
         // through an SPI write can come back blank after a soft reset (seen on
@@ -401,7 +414,7 @@ void update(App& app, uint32_t now_ms, const power::BatteryView& batt) {
     ColorState col;
     p[7] = app.live_color(col) ? (uint8_t)col : 0xFF;
     p[8] = (uint8_t)app.current_side();
-    p[9] = flags_of(st) | (batt.charging ? 8 : 0);
+    p[9] = flags_of(st) | ((batt.charging || batt.usb_power) ? 8 : 0);
     put_u16(p + 10, (uint16_t)(app.strokes_a() > 0xFFFF ? 0xFFFF : app.strokes_a()));
     put_u16(p + 12, (uint16_t)(app.strokes_b() > 0xFFFF ? 0xFFFF : app.strokes_b()));
     p[14] = app.green_pct();

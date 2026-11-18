@@ -46,6 +46,8 @@ fun FirmwareScreen(app: SharpGuideApp) {
     val mtu by ble.mtu.collectAsState()
     val ota by app.ota.ui.collectAsState()
     val ready = link == LinkState.READY
+    val live by ble.live.collectAsState()
+    val lowBattery = ready && live?.tooLowForUpdate == true
     val board = info?.board ?: ""
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -123,9 +125,13 @@ fun FirmwareScreen(app: SharpGuideApp) {
                     if (p.strippedMerged) Text("Merged flasher image: sending the app part only (from 0x10000).",
                         style = MaterialTheme.typography.bodySmall)
                     Text("CRC-32 %08X".format(p.crc32), style = MaterialTheme.typography.bodySmall)
-                    if (!ota.busy) Button(enabled = ready, onClick = { app.ota.start(p) }) {
+                    if (!ota.busy) Button(enabled = ready && !lowBattery, onClick = { app.ota.start(p) }) {
                         Text("Upload to stick")
                     }
+                    if (lowBattery && !ota.busy) Text(
+                        "The stick's battery is too low for an update. Plug it into USB first.",
+                        color = MaterialTheme.colorScheme.error,
+                    )
                     if (!ready && !ota.busy) Text("Connect to the stick to upload.", color = MaterialTheme.colorScheme.error)
                 }
             }

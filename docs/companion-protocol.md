@@ -27,7 +27,7 @@ OTA_CTRL.
 | 6 | u8 | tolerance: 0 TIGHT ±2°, 1 NORMAL ±3°, 2 EASY ±5° |
 | 7 | u8 | colour: 0 GREEN (on angle), 1 BLUE (too low), 2 RED (too high), 255 = none (not coaching) |
 | 8 | u8 | current side: 0 A, 1 B |
-| 9 | u8 | flags: bit0 buzzer, bit1 steady, bit2 tenths, bit3 charging |
+| 9 | u8 | flags: bit0 buzzer, bit1 steady, bit2 tenths, bit3 on external power (USB present or charging) |
 | 10 | u16 | strokes side A |
 | 12 | u16 | strokes side B |
 | 14 | u8 | on-angle % this session (0..100) |
@@ -83,7 +83,8 @@ OTA_CTRL commands (app → stick):
 | `07` + u8 mode | RESTART the stick (mode 0 = normal restart, 1 = 200 ms deep-sleep wake, 2 = power off / sleep, as the power button does). Replies `[07, 00]`, restarts ~0.5 s later |
 
 Stick → app notifications on OTA_CTRL: `[cmd, status]` where status 0 = OK,
-1 = bad state/command, 2 = flash error, 3 = size/crc mismatch, 4 = wrong chip.
+1 = bad state/command, 2 = flash error, 3 = size/crc mismatch, 4 = wrong chip,
+5 = battery too low (BEGIN only: 0 bars and not on USB power — plug the stick in).
 After a successful END reply the stick reboots into the new firmware about
 one second later (the BLE link drops — that's expected).
 

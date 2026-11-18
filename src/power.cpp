@@ -167,7 +167,7 @@ void update_backlight(uint32_t now_ms, State current,
 
 #ifndef UNIT_TEST
 BatteryView battery_sample(uint32_t now_ms) {
-    static BatteryView s_view{-1, false};
+    static BatteryView s_view{-1, false, false};
     static uint32_t    s_last_poll_ms = 0;
     static bool        s_polled     = false;
     static bool        s_level_seen = false;
@@ -184,6 +184,9 @@ BatteryView battery_sample(uint32_t now_ms) {
     if (pct >= 0) s_level_seen = true;
     s_view.bars     = battery_bars(pct, s_view.bars);
     s_view.charging = (M5.Power.isCharging() == m5::Power_Class::is_charging);
+    // VBUS in millivolts; negative = this board cannot report it.
+    const int vbus_mv = M5.Power.getVBUSVoltage();
+    s_view.usb_power  = (vbus_mv >= 0) ? (vbus_mv > 4000) : s_view.charging;
     return s_view;
 }
 
@@ -244,7 +247,7 @@ BatteryView battery_sample(uint32_t now_ms) {
     while (true) {}  // neither deepSleep() nor powerOff() returns
 }
 #else
-BatteryView battery_sample(uint32_t) { return {-1, false}; }
+BatteryView battery_sample(uint32_t) { return {-1, false, false}; }
 [[noreturn]] void enter_deep_sleep() {
     while (true) {}
 }

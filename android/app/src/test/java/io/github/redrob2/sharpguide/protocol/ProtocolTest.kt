@@ -30,6 +30,16 @@ class LiveFrameTest {
         assertTrue(f.hasAngle)
     }
 
+    @Test fun emptyBatteryBlocksUpdatesUnlessCharging() {
+        fun frame(flags: Int, bars: Int) =
+            LiveFrame.parse(bytes(1, 1, 0, 0, 0x8C, 0x00, 0, 255, 0, flags, 0, 0, 0, 0, 0, bars))!!
+        assertTrue(frame(flags = 0x02, bars = 0).tooLowForUpdate)      // empty, on battery
+        assertFalse(frame(flags = 0x0A, bars = 0).tooLowForUpdate)     // empty but charging
+        assertFalse(frame(flags = 0x02, bars = 1).tooLowForUpdate)     // one bar is enough
+        assertFalse(frame(flags = 0x02, bars = 0xFF).tooLowForUpdate)  // unknown level: allowed
+        assertEquals("battery too low, plug the stick in", Ota.statusText(5))
+    }
+
     @Test fun negativeAngleAndUnknownBattery() {
         // -250 centi-degrees = 0xFF06, colour none, battery -1
         val f = LiveFrame.parse(bytes(1, 6, 0x06, 0xFF, 0x2C, 0x01, 2, 255, 0, 0, 0, 0, 0, 0, 0, 0xFF))!!

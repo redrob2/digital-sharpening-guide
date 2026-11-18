@@ -38,6 +38,11 @@ namespace power {
     struct BatteryView {
         int  bars;       // 0..4 filled bars; -1 = level unknown (PMIC read failed)
         bool charging;
+        // External (USB) power is present. Not the same as `charging`: the
+        // PMIC's charging flag drops in and out while a flat cell is on USB,
+        // and a full cell on USB is not charging at all. Falls back to
+        // `charging` on boards that cannot read VBUS.
+        bool usb_power;
     };
 
     // Quantize a 0..100 percentage into 0..4 bars with a +-3 % hysteresis band
