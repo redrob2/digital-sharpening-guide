@@ -1,0 +1,15 @@
+# Gradle / Android Studio
+.gradle/
+build/
+**/build/
+local.properties
+.idea/
+*.iml
+.kotlin/
+captures/
+.externalNativeBuild/
+.cxx/
+# Built packages (only release/ is kept)
+*.apk
+*.aab
+!release/*.apk
