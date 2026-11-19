@@ -220,6 +220,20 @@ void loop() {
         const uint32_t since_real     = since_activity < since_stroke ? since_activity : since_stroke;
         if (since_real < LINK_AWAKE_MAX_MS) idle_activity_ms = idle_stroke_ms = now;
     }
+    // On external (USB) power there is no cell to protect, so the stick does
+    // not idle off at all. The idle clock restarts when the cable comes out
+    // (held_ms), so unplugging a long-idle stick gives the normal timeout
+    // rather than an instant power-off. The power key and SUMMARY's B still
+    // turn it off, and the backlight still dims.
+    {
+        static uint32_t held_ms    = 0;
+        static bool     held_valid = false;
+        if (batt.usb_power || batt.charging) { held_ms = now; held_valid = true; }
+        if (held_valid) {
+            if ((int32_t)(held_ms - idle_activity_ms) > 0) idle_activity_ms = held_ms;
+            if ((int32_t)(held_ms - idle_stroke_ms)   > 0) idle_stroke_ms   = held_ms;
+        }
+    }
 
     // Sleep check uses App's real last-activity / last-stroke timestamps
     // (or "now" while the companion app holds the stick awake).
