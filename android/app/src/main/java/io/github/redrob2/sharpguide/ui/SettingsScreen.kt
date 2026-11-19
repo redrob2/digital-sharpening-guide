@@ -59,10 +59,14 @@ fun SettingsScreen(ble: BleClient) {
     var buzzer by remember(stick) { mutableStateOf(base.buzzer) }
     var steady by remember(stick) { mutableStateOf(base.steady) }
     var tenths by remember(stick) { mutableStateOf(base.tenths) }
+    // 0 from the stick means its firmware has no brightness setting.
+    val hasBrightness = base.brightness != 0
+    var bright by remember(stick) { mutableIntStateOf(if (hasBrightness) base.brightness else 100) }
     // Cleared when the stick notifies back what it applied.
     var status by remember(stick) { mutableStateOf<String?>(null) }
 
-    val edited = StickSettings(tol, target, buzzer, steady, tenths)
+    val edited = StickSettings(tol, target, buzzer, steady, tenths,
+        brightness = if (hasBrightness) bright else 0)
     val dirty = stick == null || edited.copy(version = stick!!.version) != stick
 
     Column(
@@ -100,6 +104,29 @@ fun SettingsScreen(ble: BleClient) {
             }
         }
 
+        if (hasBrightness) {
+            Text("Stick screen brightness", style = MaterialTheme.typography.titleMedium)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Slider(
+                    modifier = Modifier.weight(1f),
+                    value = bright.toFloat(),
+                    onValueChange = { bright = ((it / 10f).roundToInt() * 10).coerceIn(10, 100) },
+                    // Applies as soon as you let go, so you can judge it on the stick.
+                    onValueChangeFinished = {
+                        if (ready) scope.launch { ble.writeSettings(edited.copy(brightness = bright)) }
+                    },
+                    valueRange = 10f..100f,
+                    steps = 8,
+                )
+                Text("$bright %", style = MaterialTheme.typography.titleMedium)
+            }
+            Text(
+                "Lower saves battery: the backlight is the stick's biggest drain. Applies when you let go.",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.White.copy(alpha = 0.7f),
+            )
+        }
+
         SwitchRow("Buzzer", "Beep when out of tolerance", buzzer) { buzzer = it }
         SwitchRow("Steady mode", "Extra smoothing against stroke sway", steady) { steady = it }
         SwitchRow("Tenths", "Show one decimal on the stick", tenths) { tenths = it }
@@ -116,7 +143,8 @@ fun SettingsScreen(ble: BleClient) {
         stick?.let { s ->
             Text(
                 "Stick has: ${AngleFormat.tenthsToString(s.targetTenths)}°, ${s.tolerance.label}, " +
-                    "buzzer ${onOff(s.buzzer)}, steady ${onOff(s.steady)}, tenths ${onOff(s.tenths)}",
+                    "buzzer ${onOff(s.buzzer)}, steady ${onOff(s.steady)}, tenths ${onOff(s.tenths)}" +
+                    (if (s.brightness != 0) ", brightness ${s.brightness} %" else ""),
                 style = MaterialTheme.typography.bodyMedium,
                 color = Color.White.copy(alpha = 0.75f),
             )

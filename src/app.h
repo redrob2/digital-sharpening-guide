@@ -31,6 +31,7 @@ public:
     bool      buzzer_on()        const { return buzzer_on_; }
     bool      steady_on()        const { return steady_; }
     bool      tenths_on()        const { return tenths_; }
+    uint8_t   brightness_pct()   const { return brightness_; }
 
     // ---- Companion-app link (BLE) ------------------------------------------
     // Settings the app can change. Applied from the main loop only (the BLE
@@ -41,10 +42,11 @@ public:
         bool      buzzer;
         bool      steady;
         bool      tenths;
+        uint8_t   brightness;   // 10..100 %, scales every screen's backlight
     };
     void      apply_remote_settings(const RemoteSettings& s, uint32_t now_ms);
     RemoteSettings current_settings() const {
-        return { target_deg_, tol_, buzzer_on_, steady_, tenths_ };
+        return { target_deg_, tol_, buzzer_on_, steady_, tenths_, brightness_ };
     }
     // Bumped every time any of the settings above change (on-device or
     // remote), so the link knows when to notify the app.
@@ -109,6 +111,7 @@ private:
     bool             steady_               = true;
     // Live ACTIVE angle at 0.1 deg (A-hold on the TOLERANCE screen, or the app).
     bool             tenths_               = false;
+    uint8_t          brightness_           = 100;   // % of normal backlight (companion app)
     uint32_t         settings_rev_         = 0;
     float            last_bevel_           = 0.0f;   // last ACTIVE bevel, for the link
 

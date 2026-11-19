@@ -9,6 +9,7 @@ primary GATT service. All multi-byte integers are **little-endian**.
 | LIVE (read, notify) | `5347a001-0b1e-4a6c-9d2e-6b6e69666521` |
 | SETTINGS (read, write, notify) | `5347a002-0b1e-4a6c-9d2e-6b6e69666521` |
 | INFO (read) | `5347a003-0b1e-4a6c-9d2e-6b6e69666521` |
+| POWERLOG (read) | `5347a004-0b1e-4a6c-9d2e-6b6e69666521` |
 | OTA_CTRL (write, notify) | `5347a010-0b1e-4a6c-9d2e-6b6e69666521` |
 | OTA_DATA (write with response) | `5347a011-0b1e-4a6c-9d2e-6b6e69666521` |
 
@@ -50,7 +51,8 @@ ACTIVE (the bevel being coached) and VERIFY (accuracy check reading).
 | 1 | u8 | tolerance (0..2) |
 | 2 | u16 | target × 10, clamped by the stick to 50..450 (5.0°..45.0°) |
 | 4 | u8 | flags: bit0 buzzer, bit1 steady, bit2 tenths |
-| 5..7 | — | reserved, write 0 |
+| 5 | u8 | screen brightness, 10..100 % of normal. Write 0 to leave it unchanged |
+| 6..7 | — | reserved, write 0 |
 
 Writing the full 8 bytes applies them right away (target included, even
 mid-session) and saves tolerance/buzzer/steady/tenths to the stick's flash.
@@ -59,6 +61,16 @@ The stick notifies SETTINGS back with the values it actually applied.
 ## INFO — UTF-8 text
 
 `fw=1.2.0;board=S3;proto=1;slot=app0` — `board` is `PLUS`, `PLUS2` or `S3`; `slot` is the running app partition (informational). Parse it as `;`-separated `key=value` pairs and ignore unknown keys.
+
+## POWERLOG — battery voltage history (diagnostic)
+
+The stick's power chip reports voltage, not current, so battery drain is read
+from how fast the voltage falls. The stick records one sample every 10 s
+(up to 120 = 20 min, oldest dropped) whether or not anything is connected.
+
+`[version=1, count, period_s, 0]` then `count` entries, oldest first:
+u16 battery mV, u8 backlight % actually applied, u8 flags (bit0 a central is
+connected, bit1 on external power, bit2 full-rate LIVE forced, bits 4-7 state).
 
 ## Firmware update (OTA)
 
@@ -80,6 +92,7 @@ OTA_CTRL commands (app → stick):
 | `01` + u32 size | BEGIN. Stick erases the spare OTA slot (can take a few seconds) |
 | `03` + u32 crc32 | END. CRC-32 (IEEE, same as `java.util.zip.CRC32`) of all bytes sent |
 | `05` | ABORT |
+| `09` + u8 minutes + u8 full + u8 flip_s | DIAG (power measurements): stay awake and undimmed for `minutes` (0 cancels); if `full` = 1, send LIVE every tick even when unchanged; if `flip_s` > 0, flip the backlight between 100 % and 10 % every `flip_s` seconds. Replies `[09, 00]` |
 | `07` + u8 mode | RESTART the stick (mode 0 = normal restart, 1 = 200 ms deep-sleep wake, 2 = power off / sleep, as the power button does). Replies `[07, 00]`, restarts ~0.5 s later |
 
 Stick → app notifications on OTA_CTRL: `[cmd, status]` where status 0 = OK,

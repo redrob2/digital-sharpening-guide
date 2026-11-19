@@ -7,6 +7,7 @@ namespace {
     bool      g_steady = true;
     bool      g_tenths = false;
     float     g_target = settings::kDefaultTargetDeg;
+    uint8_t   g_bright = 100;
     Vec3      g_bias   = {0.0f, 0.0f, 0.0f};
     SessionRecord g_hist[kSessionHistoryMax];
     int           g_hist_count = 0;
@@ -23,6 +24,8 @@ namespace settings {
     void      save_tenths(bool on)        { g_tenths = on; }
     float     load_target()               { return g_target; }
     void      save_target(float deg)      { g_target = deg; }
+    uint8_t   load_brightness()           { return g_bright; }
+    void      save_brightness(uint8_t p)  { g_bright = p; }
     int  load_session_history(SessionRecord* out, int max) {
         int n = (g_hist_count < max) ? g_hist_count : max;
         for (int i = 0; i < n; i++) out[i] = g_hist[i];
@@ -63,6 +66,13 @@ namespace settings {
         const uint16_t x10 = prefs.getUShort("tgt", (uint16_t)(kDefaultTargetDeg * 10.0f));
         if (x10 < 50 || x10 > 450) return kDefaultTargetDeg;   // corrupt / out of range
         return x10 / 10.0f;
+    }
+    uint8_t load_brightness() {
+        const uint8_t p = prefs.getUChar("bright", 100);
+        return (p < 10 || p > 100) ? 100 : p;
+    }
+    void save_brightness(uint8_t pct) {
+        if (prefs.getUChar("bright", 0) != pct) prefs.putUChar("bright", pct);
     }
     void save_target(float deg) {
         const uint16_t x10 = (uint16_t)(deg * 10.0f + 0.5f);

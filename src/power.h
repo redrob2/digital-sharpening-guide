@@ -17,8 +17,10 @@ namespace power {
                     uint32_t last_activity_ms,
                     uint32_t last_stroke_ms);
 
+    // brightness_pct (10..100) scales both the normal and the dimmed level.
     void update_backlight(uint32_t now_ms, State current,
-                          uint32_t last_activity_ms, uint32_t last_stroke_ms);
+                          uint32_t last_activity_ms, uint32_t last_stroke_ms,
+                          uint8_t brightness_pct = 100);
 
     [[noreturn]] void enter_deep_sleep();
     // StickS3 only: how long to wait after going dark before telling the PMIC

@@ -28,6 +28,12 @@ namespace settings {
     float      load_target();
     void       save_target(float deg);
 
+    // Screen brightness as a percentage (10..100) of what each screen would
+    // normally use. Set from the companion app; 100 on a stick that never
+    // saved one.
+    uint8_t    load_brightness();
+    void       save_brightness(uint8_t pct);
+
     Vec3       load_gyro_bias();
     void       save_gyro_bias(Vec3 bias_dps);
 

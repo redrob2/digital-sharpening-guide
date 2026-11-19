@@ -131,6 +131,8 @@ data class StickSettings(
     val steady: Boolean = true,
     val tenths: Boolean = false,
     val version: Int = PROTOCOL_VERSION,
+    /** Screen brightness, 10..100 % of normal. 0 = not reported (older firmware) / leave unchanged. */
+    val brightness: Int = 0,
 ) {
     fun encode(): ByteArray {
         val t = targetTenths.coerceIn(TARGET_MIN, TARGET_MAX)
@@ -140,7 +142,8 @@ data class StickSettings(
             tolerance.code.toByte(),
             (t and 0xFF).toByte(), (t shr 8).toByte(),
             flags.toByte(),
-            0, 0, 0,
+            (if (brightness == 0) 0 else brightness.coerceIn(BRIGHTNESS_MIN, 100)).toByte(),
+            0, 0,
         )
     }
 
@@ -148,6 +151,7 @@ data class StickSettings(
         const val SIZE = 8
         const val TARGET_MIN = 50
         const val TARGET_MAX = 450
+        const val BRIGHTNESS_MIN = 10
 
         fun parse(b: ByteArray): StickSettings? {
             if (b.size < SIZE) return null
@@ -159,6 +163,7 @@ data class StickSettings(
                 buzzer = flags and 1 != 0,
                 steady = flags and 2 != 0,
                 tenths = flags and 4 != 0,
+                brightness = u8(b, 5).let { if (it in BRIGHTNESS_MIN..100) it else 0 },
             )
         }
     }

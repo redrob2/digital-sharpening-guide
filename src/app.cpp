@@ -126,6 +126,7 @@ void App::begin(bool had_session_in_rtc_ram) {
     steady_    = settings::load_steady();
     tenths_    = settings::load_tenths();
     target_deg_ = settings::load_target();   // last target used; a resumed session overrides it below
+    brightness_ = settings::load_brightness();
     apply_steady_();
 
     // Wake-from-sleep path. RTC RAM only survives deep sleep (battery pull
@@ -858,6 +859,12 @@ void App::apply_remote_settings(const RemoteSettings& s, uint32_t now_ms) {
     if (s.buzzer != buzzer_on_) { buzzer_on_ = s.buzzer; settings::save_buzzer(buzzer_on_); }
     if (steady_changed)         { steady_ = s.steady; settings::save_steady(steady_); apply_steady_(); }
     if (s.tenths != tenths_)    { tenths_ = s.tenths; settings::save_tenths(tenths_); }
+    {
+        uint8_t b = s.brightness;
+        if (b < 10)  b = 10;
+        if (b > 100) b = 100;
+        if (b != brightness_) { brightness_ = b; settings::save_brightness(b); }
+    }
     if (tol_changed)            settings::save_tolerance(tol_);
     ++settings_rev_;
     last_activity_ms_ = now_ms;

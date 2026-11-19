@@ -86,6 +86,13 @@ class SettingsTest {
 
     @Test fun encodeClampsTarget() {
         assertArrayEquals(bytes(1, 1, 50, 0, 0, 0, 0, 0), StickSettings(Tolerance.NORMAL, 10, false, false, false).encode())
+        // Brightness rides in byte 5: 0 = leave unchanged, otherwise clamped to 10..100.
+        assertArrayEquals(bytes(1, 1, 0x8C, 0, 0, 40, 0, 0),
+            StickSettings(Tolerance.NORMAL, 140, false, false, false, brightness = 40).encode())
+        assertArrayEquals(bytes(1, 1, 0x8C, 0, 0, 10, 0, 0),
+            StickSettings(Tolerance.NORMAL, 140, false, false, false, brightness = 3).encode())
+        assertEquals(40, StickSettings.parse(bytes(1, 1, 0x8C, 0, 0, 40, 0, 0))!!.brightness)
+        assertEquals(0, StickSettings.parse(bytes(1, 1, 0x8C, 0, 0, 0, 0, 0))!!.brightness)   // older firmware
         assertArrayEquals(bytes(1, 1, 0xC2, 0x01, 0, 0, 0, 0), StickSettings(Tolerance.NORMAL, 999, false, false, false).encode())
     }
 

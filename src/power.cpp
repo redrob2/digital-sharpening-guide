@@ -141,8 +141,15 @@ bool check_idle(uint32_t now_ms, State current,
 }
 
 void update_backlight(uint32_t now_ms, State current,
-                      uint32_t last_activity_ms, uint32_t last_stroke_ms)
+                      uint32_t last_activity_ms, uint32_t last_stroke_ms,
+                      uint8_t brightness_pct)
 {
+    if (brightness_pct > 100) brightness_pct = 100;
+    // Never fully dark from this setting alone: 3 % is still readable indoors.
+    auto scaled = [brightness_pct](uint8_t pct) -> uint8_t {
+        const uint8_t v = (uint8_t)((uint16_t)pct * brightness_pct / 100u);
+        return v < 3 ? 3 : v;
+    };
     auto cfg = config_for(current);
     // ACTIVE baseline is a mild discount from full — bright enough to read the
     // color cue clearly under typical indoor light, while saving some battery.
@@ -153,7 +160,7 @@ void update_backlight(uint32_t now_ms, State current,
     uint8_t dim_pct = (current == State::ACTIVE) ? 30 : 15;
 
     if (cfg.dim_ms == 0) {
-        ui::set_backlight(baseline_pct);
+        ui::set_backlight(scaled(baseline_pct));
         return;
     }
     // Same reference as check_idle: ACTIVE uses the later of strokes and activity.
@@ -162,7 +169,7 @@ void update_backlight(uint32_t now_ms, State current,
         : last_activity_ms;
     uint32_t idle = now_ms - reference;
     uint8_t pct = (idle >= cfg.dim_ms) ? dim_pct : baseline_pct;
-    ui::set_backlight(pct);
+    ui::set_backlight(scaled(pct));
 }
 
 #ifndef UNIT_TEST

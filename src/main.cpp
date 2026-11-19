@@ -228,7 +228,9 @@ void loop() {
     {
         static uint32_t held_ms    = 0;
         static bool     held_valid = false;
-        if (batt.usb_power || batt.charging) { held_ms = now; held_valid = true; }
+        if (batt.usb_power || batt.charging || companion::hold_awake(now)) {
+            held_ms = now; held_valid = true;
+        }
         if (held_valid) {
             if ((int32_t)(held_ms - idle_activity_ms) > 0) idle_activity_ms = held_ms;
             if ((int32_t)(held_ms - idle_stroke_ms)   > 0) idle_stroke_ms   = held_ms;
@@ -246,9 +248,16 @@ void loop() {
         g_app.flush_session_for_sleep();
         power::enter_deep_sleep();
     }
-    power::update_backlight(now, g_app.current(),
-                            g_app.last_activity_ms(),
-                            g_app.last_stroke_ms());
+    {
+        // Power-test overrides (DIAG): no idle dimming while a stay-awake hold
+        // runs, and the test may drive the brightness itself.
+        const bool    hold  = companion::hold_awake(now);
+        const uint8_t force = companion::brightness_override(now);
+        power::update_backlight(now, g_app.current(),
+                                hold ? now : g_app.last_activity_ms(),
+                                hold ? now : g_app.last_stroke_ms(),
+                                force ? force : g_app.brightness_pct());
+    }
 
     // If state entered SLEEP explicitly (e.g., B in SUMMARY), trigger sleep now.
     if (g_app.current() == State::SLEEP) {

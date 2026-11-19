@@ -53,4 +53,5 @@ namespace ui {
     void draw_ota_failed();
 
     void set_backlight(uint8_t percent); // 0..100
+    uint8_t backlight_percent();         // what set_backlight last applied
 }

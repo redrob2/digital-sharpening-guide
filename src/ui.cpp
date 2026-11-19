@@ -523,15 +523,18 @@ void draw_ota_failed() {
     draw_centered("Old firmware kept. Restarting.", 110, 1, COL_WHITE, COL_BLACK);
 }
 
+static uint8_t s_backlight_pct = 255;   // impossible sentinel (range is 0..100)
+
 void set_backlight(uint8_t percent) {
     // Brightness is an AXP192 I2C register write on this board (bus shared with
     // the MPU6886), so same-value writes must be skipped, not repeated every tick.
-    static uint8_t s_last_pct = 255;   // impossible sentinel (range is 0..100)
     if (percent > 100) percent = 100;
-    if (percent == s_last_pct) return;
-    s_last_pct = percent;
+    if (percent == s_backlight_pct) return;
+    s_backlight_pct = percent;
     M5.Display.setBrightness((uint8_t)(percent * 255u / 100u));
 }
+
+uint8_t backlight_percent() { return s_backlight_pct == 255 ? 100 : s_backlight_pct; }
 
 } // namespace ui
 
@@ -557,5 +560,6 @@ namespace ui {
     void draw_ota(int, bool) {}
     void draw_ota_failed() {}
     void set_backlight(uint8_t) {}
+    uint8_t backlight_percent() { return 100; }
 }
 #endif

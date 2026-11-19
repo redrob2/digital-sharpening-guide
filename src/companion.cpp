@@ -15,6 +15,7 @@
 #include "app.h"
 #include "board.h"
 #include "version.h"
+#include "ui.h"
 
 #if defined(SG_BOARD_PLUS)
   #define SG_BOARD_NAME "PLUS"
@@ -39,6 +40,7 @@ constexpr const char* SVC_UUID      = "5347a000-0b1e-4a6c-9d2e-6b6e69666521";
 constexpr const char* LIVE_UUID     = "5347a001-0b1e-4a6c-9d2e-6b6e69666521";
 constexpr const char* SETTINGS_UUID = "5347a002-0b1e-4a6c-9d2e-6b6e69666521";
 constexpr const char* INFO_UUID     = "5347a003-0b1e-4a6c-9d2e-6b6e69666521";
+constexpr const char* POWERLOG_UUID = "5347a004-0b1e-4a6c-9d2e-6b6e69666521";
 constexpr const char* OTA_CTRL_UUID = "5347a010-0b1e-4a6c-9d2e-6b6e69666521";
 constexpr const char* OTA_DATA_UUID = "5347a011-0b1e-4a6c-9d2e-6b6e69666521";
 
@@ -46,7 +48,7 @@ constexpr uint8_t PROTO_VERSION = 1;
 
 enum OtaStatus : uint8_t { OK = 0, BAD_STATE = 1, FLASH_ERR = 2, MISMATCH = 3, WRONG_BOARD = 4,
                             LOW_BATTERY = 5 };
-enum OtaCmd    : uint8_t { BEGIN = 0x01, END = 0x03, ABORT = 0x05, RESTART = 0x07 };
+enum OtaCmd    : uint8_t { BEGIN = 0x01, END = 0x03, ABORT = 0x05, RESTART = 0x07, DIAG = 0x09 };
 
 NimBLEServer*         s_server   = nullptr;
 NimBLECharacteristic* s_live     = nullptr;
@@ -61,6 +63,23 @@ volatile uint16_t s_ota_conn = 0xFFFF;      // connection that owns the OTA tran
 // Newest connection, and when to ask it for a faster link (0 = nothing pending).
 volatile uint16_t s_new_conn       = 0xFFFF;
 volatile uint32_t s_fast_params_at = 0;
+// ---- power log ------------------------------------------------------------
+// The M5PM1 reports voltages only (no current), so battery drain is judged
+// from how fast VBAT falls. One sample every POWERLOG_PERIOD_S, newest last,
+// readable in one go over BLE (4 + 4*120 bytes fits a 512-byte attribute).
+constexpr uint32_t POWERLOG_PERIOD_S = 10;
+constexpr int      POWERLOG_N        = 120;       // 20 minutes
+struct PowerSample { uint16_t mv; uint8_t backlight; uint8_t flags; };
+PowerSample s_plog[POWERLOG_N];
+int         s_plog_count   = 0;
+uint32_t    s_plog_next_ms = 0;
+NimBLECharacteristic* s_powerlog = nullptr;
+// Diagnostic overrides set by the DIAG command.
+volatile uint32_t s_hold_awake_until = 0;         // millis(), 0 = none
+volatile bool     s_full_rate        = false;     // LIVE every tick even if unchanged
+volatile uint8_t  s_cycle_s          = 0;         // backlight 100/10 flip period, 0 = off
+volatile uint32_t s_cycle_t0         = 0;
+
 // Last LIVE packet sent and when, for send-on-change.
 uint8_t  s_last_live[16];
 uint32_t s_last_live_ms = 0;
@@ -229,6 +248,17 @@ class OtaCtrlCb : public NimBLECharacteristicCallbacks {
                 ota_abort();
                 ota_reply(ABORT, OK);
                 return;
+            case DIAG: {
+                // [09, stay-awake minutes (0 = cancel), full-rate LIVE 0/1,
+                //  backlight flip period in seconds (0 = off)]
+                const uint8_t mins = (v.length() >= 2) ? d[1] : 0;
+                s_hold_awake_until = mins ? (millis() + (uint32_t)mins * 60000u) : 0;
+                s_full_rate        = (v.length() >= 3) && d[2];
+                s_cycle_s          = (v.length() >= 4) ? d[3] : 0;
+                s_cycle_t0         = millis();
+                ota_reply(DIAG, OK);
+                return;
+            }
             case RESTART:
                 // Diagnostic: restart now via the chosen path (see s_restart_mode).
                 if (s_ota.active) { ota_reply(RESTART, BAD_STATE); return; }
@@ -280,6 +310,7 @@ void fill_settings(uint8_t out[8], const App::RemoteSettings& s) {
     out[1] = (uint8_t)s.tol;
     put_u16(out + 2, (uint16_t)std::lround(s.target_deg * 10.0f));
     out[4] = flags_of(s);
+    out[5] = s.brightness;
 }
 
 } // namespace
@@ -302,6 +333,7 @@ void begin() {
     s_settings = svc->createCharacteristic(SETTINGS_UUID,
         NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::NOTIFY);
     s_settings->setCallbacks(new SettingsCb());
+    s_powerlog = svc->createCharacteristic(POWERLOG_UUID, NIMBLE_PROPERTY::READ, 512);
     NimBLECharacteristic* info = svc->createCharacteristic(INFO_UUID, NIMBLE_PROPERTY::READ);
     // std::string, not the literal: the const char[N] overload sends the NUL too.
     // Referenced so the linker's section GC keeps the tag in the image
@@ -332,6 +364,33 @@ void begin() {
 }
 
 void update(App& app, uint32_t now_ms, const power::BatteryView& batt) {
+    // Power log: one sample every POWERLOG_PERIOD_S, connected or not.
+    if ((int32_t)(now_ms - s_plog_next_ms) >= 0 && !s_ota.active) {
+        s_plog_next_ms = now_ms + POWERLOG_PERIOD_S * 1000u;
+        const int16_t mv = M5.Power.getBatteryVoltage();
+        PowerSample ps;
+        ps.mv        = (mv > 0) ? (uint16_t)mv : 0;
+        ps.backlight = ui::backlight_percent();
+        ps.flags     = (s_conn_count > 0 ? 1 : 0) | ((batt.usb_power || batt.charging) ? 2 : 0)
+                     | (s_full_rate ? 4 : 0) | ((uint8_t)app.current() << 4);
+        if (s_plog_count == POWERLOG_N) {
+            std::memmove(s_plog, s_plog + 1, sizeof(PowerSample) * (POWERLOG_N - 1));
+            --s_plog_count;
+        }
+        s_plog[s_plog_count++] = ps;
+        uint8_t out[4 + 4 * POWERLOG_N];
+        out[0] = PROTO_VERSION;
+        out[1] = (uint8_t)s_plog_count;
+        out[2] = (uint8_t)POWERLOG_PERIOD_S;
+        out[3] = 0;
+        for (int i = 0; i < s_plog_count; i++) {
+            put_u16(out + 4 + 4 * i, s_plog[i].mv);
+            out[4 + 4 * i + 2] = s_plog[i].backlight;
+            out[4 + 4 * i + 3] = s_plog[i].flags;
+        }
+        s_powerlog->setValue(out, 4 + 4 * s_plog_count);
+    }
+
     s_batt_bars     = (int8_t)batt.bars;
     s_batt_powered  = batt.charging || batt.usb_power;
     if (s_reboot_at && (int32_t)(millis() - s_reboot_at) >= 0) {
@@ -372,6 +431,7 @@ void update(App& app, uint32_t now_ms, const power::BatteryView& batt) {
         s.buzzer = b[4] & 1;
         s.steady = b[4] & 2;
         s.tenths = b[4] & 4;
+        if (b[5] != 0) s.brightness = b[5];   // 0 = not specified (older app)
         app.apply_remote_settings(s, now_ms);
     }
 
@@ -422,7 +482,7 @@ void update(App& app, uint32_t now_ms, const power::BatteryView& batt) {
     // Send on change, plus a slow heartbeat. On the menu screens nothing
     // changes, so the radio drops from 50 packets a second to 5; while
     // coaching the angle moves every tick and every tick still goes out.
-    if (s_live_valid && std::memcmp(p, s_last_live, sizeof p) == 0
+    if (!s_full_rate && s_live_valid && std::memcmp(p, s_last_live, sizeof p) == 0
         && (now_ms - s_last_live_ms) < LIVE_HEARTBEAT_MS) {
         return;
     }
@@ -434,6 +494,15 @@ void update(App& app, uint32_t now_ms, const power::BatteryView& batt) {
 }
 
 bool connected()   { return s_conn_count > 0; }
+bool hold_awake(uint32_t) {
+    const uint32_t until = s_hold_awake_until;
+    return until != 0 && (int32_t)(until - millis()) > 0;
+}
+uint8_t brightness_override(uint32_t now_ms) {
+    const uint8_t period = s_cycle_s;
+    if (period == 0 || !hold_awake(now_ms)) return 0;
+    return (((millis() - s_cycle_t0) / (period * 1000u)) % 2u) == 0 ? 100 : 10;
+}
 bool ota_active()  { return s_ota.active || s_finishing || s_reboot_at != 0; }
 int  ota_percent() {
     if (s_reboot_at) return 100;
@@ -448,6 +517,8 @@ namespace companion {
     void begin() {}
     void update(App&, uint32_t, const power::BatteryView&) {}
     bool connected()  { return false; }
+    bool hold_awake(uint32_t) { return false; }
+    uint8_t brightness_override(uint32_t) { return 0; }
     bool ota_active() { return false; }
     int  ota_percent() { return 0; }
 }
