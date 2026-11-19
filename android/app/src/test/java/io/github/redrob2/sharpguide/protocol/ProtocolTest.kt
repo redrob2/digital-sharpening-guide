@@ -38,6 +38,7 @@ class LiveFrameTest {
         assertFalse(frame(flags = 0x02, bars = 1).tooLowForUpdate)     // one bar is enough
         assertFalse(frame(flags = 0x02, bars = 0xFF).tooLowForUpdate)  // unknown level: allowed
         assertEquals("battery too low, plug the stick in", Ota.statusText(5))
+        assertEquals("not confirmed on the stick (press A there when it asks)", Ota.statusText(6))
     }
 
     @Test fun negativeAngleAndUnknownBattery() {

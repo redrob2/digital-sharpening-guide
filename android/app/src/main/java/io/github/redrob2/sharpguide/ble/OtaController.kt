@@ -67,8 +67,9 @@ class OtaController(private val ble: BleClient) {
         drain()
         _ui.value = OtaUi.Erasing
         if (!ble.write(Uuids.OTA_CTRL, Ota.begin(img.size))) return OtaUi.Failed("Could not send BEGIN.")
-        val begin = awaitReply(Ota.CMD_BEGIN, 25_000)
-            ?: return OtaUi.Failed("The stick did not answer BEGIN (erase timed out).")
+        // The stick waits up to 20 s for button A, then erases (a few seconds).
+        val begin = awaitReply(Ota.CMD_BEGIN, 35_000)
+            ?: return OtaUi.Failed("The stick did not answer. Press A on the stick when it asks, then try again.")
         if (!begin.ok) return OtaUi.Failed("BEGIN refused: ${Ota.statusText(begin.status)}")
 
         val chunk = otaChunkSize(ble.mtu.value)

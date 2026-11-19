@@ -147,7 +147,8 @@ private fun OtaProgress(ota: OtaUi, onCancel: () -> Unit, onDismiss: () -> Unit)
     when (ota) {
         OtaUi.Idle -> Unit
         OtaUi.Erasing -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("Erasing the update slot on the stick…")
+            Text("Press A on the stick to allow the update.", style = MaterialTheme.typography.titleMedium)
+            Text("The stick asks before any new firmware is written. It then clears space for it, which takes a few seconds.")
             LinearProgressIndicator(Modifier.fillMaxWidth())
             OutlinedButton(onClick = onCancel) { Text("Cancel") }
         }

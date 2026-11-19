@@ -887,3 +887,31 @@ void App::apply_remote_settings(const RemoteSettings& s, uint32_t now_ms) {
             break;
     }
 }
+
+void App::redraw(uint32_t now_ms) {
+    ui::clear();                       // also invalidates every dirty-region cache
+    last_activity_ms_ = now_ms;
+    switch (state_) {
+        case State::BOOT:          ui::draw_boot(); break;
+        case State::SET_TARGET:    ui::draw_set_target(target_deg_, in_preset_mode_, preset_selection_); break;
+        case State::SET_TOLERANCE: ui::draw_set_tolerance(tol_, steady_, tenths_); break;
+        case State::ZERO_CAL:      zc_rendered_ = ZeroCalSubstate::DONE; break;   // prompt repaints next tick
+        case State::REZERO:        break;   // progress screen repaints itself
+        case State::ACTIVE:        break;   // repaints itself next tick
+        case State::VERIFY:
+            if (!verify_captured_ && zc_fsm_.phase() == zero_cal::Phase::IDLE) ui::draw_verify_prompt();
+            break;
+        case State::SUMMARY:
+            ui::draw_summary(target_deg_, tol_, strokes_a_, strokes_b_, duration_s(), green_pct());
+            break;
+        case State::HISTORY: {
+            SessionRecord recs[kSessionHistoryMax];
+            int n = settings::load_session_history(recs, kSessionHistoryMax);
+            ui::draw_history(recs, n);
+            break;
+        }
+        case State::FAULT:         ui::draw_fault(fault_code_); break;
+        case State::RESUME_PROMPT: last_countdown_sec_ = -1; break;   // countdown repaints
+        case State::SLEEP:         break;
+    }
+}

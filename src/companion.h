@@ -23,6 +23,11 @@ namespace companion {
     uint8_t brightness_override(uint32_t now_ms);
     // True from OTA BEGIN until END/ABORT/timeout. While active the main loop
     // shows the update screen and must not sleep.
+    // A firmware update has been requested over the link and is waiting for a
+    // button press on the stick. Nothing is erased or written until the user
+    // answers; no answer within the timeout counts as "no".
+    bool ota_confirm_pending();
+    void ota_confirm_answer(bool yes);
     bool ota_active();
     int  ota_percent();     // 0..100
 }

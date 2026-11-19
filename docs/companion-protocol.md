@@ -89,15 +89,19 @@ OTA_CTRL commands (app → stick):
 
 | Bytes | Meaning |
 |---|---|
-| `01` + u32 size | BEGIN. Stick erases the spare OTA slot (can take a few seconds) |
+| `01` + u32 size | BEGIN. The stick shows "UPDATE FIRMWARE?" and waits up to 20 s for button A; only then does it erase the spare OTA slot (a few more seconds) and reply. Allow 30 s for the reply |
 | `03` + u32 crc32 | END. CRC-32 (IEEE, same as `java.util.zip.CRC32`) of all bytes sent |
 | `05` | ABORT |
-| `09` + u8 minutes + u8 full + u8 flip_s | DIAG (power measurements): stay awake and undimmed for `minutes` (0 cancels); if `full` = 1, send LIVE every tick even when unchanged; if `flip_s` > 0, flip the backlight between 100 % and 10 % every `flip_s` seconds. Replies `[09, 00]` |
-| `07` + u8 mode | RESTART the stick (mode 0 = normal restart, 1 = 200 ms deep-sleep wake, 2 = power off / sleep, as the power button does). Replies `[07, 00]`, restarts ~0.5 s later |
+| `09` + u8 minutes + u8 full + u8 flip_s | Developer builds only (`-D SG_DIAG`). DIAG (power measurements): stay awake and undimmed for `minutes` (0 cancels); if `full` = 1, send LIVE every tick even when unchanged; if `flip_s` > 0, flip the backlight between 100 % and 10 % every `flip_s` seconds. Replies `[09, 00]` |
+| `07` + u8 mode | Developer builds only (`-D SG_DIAG`). RESTART the stick (mode 0 = normal restart, 1 = 200 ms deep-sleep wake, 2 = power off / sleep, as the power button does). Replies `[07, 00]`, restarts ~0.5 s later |
 
 Stick → app notifications on OTA_CTRL: `[cmd, status]` where status 0 = OK,
 1 = bad state/command, 2 = flash error, 3 = size/crc mismatch, 4 = wrong chip,
-5 = battery too low (BEGIN only: 0 bars and not on USB power — plug the stick in).
+5 = battery too low (BEGIN only: 0 bars and not on USB power — plug the stick in),
+6 = declined (BEGIN only: B was pressed on the stick, or nobody pressed A in time).
+
+The link has no pairing. Settings can be changed by anything in range; a
+firmware update cannot start without that button press on the stick.
 After a successful END reply the stick reboots into the new firmware about
 one second later (the BLE link drops — that's expected).
 

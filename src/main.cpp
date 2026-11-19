@@ -167,6 +167,26 @@ void loop() {
     // Firmware update from the companion app: the radio and flash own the
     // device until it reboots into the new image (or the transfer fails and
     // we fall back to the session below — App was frozen, not reset).
+    // Update requested over the link: nothing happens until someone presses
+    // A here. App is frozen meanwhile (as during the update itself).
+    static bool     in_confirm       = false;
+    static uint32_t confirm_shown_ms = 0;
+    if (companion::ota_confirm_pending()) {
+        if (!in_confirm) confirm_shown_ms = now;
+        const int left = 20 - (int)((now - confirm_shown_ms) / 1000u);
+        ui::draw_ota_confirm(left, !in_confirm);
+        in_confirm = true;
+        ui::set_backlight(100);
+        if (ev == InputEvent::A_SHORT)      companion::ota_confirm_answer(true);
+        else if (ev == InputEvent::B_SHORT) companion::ota_confirm_answer(false);
+        companion::update(g_app, now, batt);
+        return;
+    }
+    if (in_confirm) {
+        in_confirm = false;
+        if (!companion::ota_active()) g_app.redraw(now);   // declined or timed out
+    }
+
     static bool in_ota = false;
     if (companion::ota_active()) {
         companion::update(g_app, now, batt);

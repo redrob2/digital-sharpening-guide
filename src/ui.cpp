@@ -516,6 +516,24 @@ void draw_ota(int percent, bool first) {
     draw_centered(buf, 72, 2, COL_WHITE, COL_BLACK);
 }
 
+void draw_ota_confirm(int seconds_left, bool first) {
+    static int s_last_s = -1;
+    if (first) {
+        clear();
+        draw_centered("UPDATE", 8, 3, COL_WHITE, COL_BLACK);
+        draw_centered("FIRMWARE?", 36, 3, COL_WHITE, COL_BLACK);
+        draw_centered("Someone is sending new firmware.", 70, 1, COL_WHITE, COL_BLACK);
+        draw_centered("A: Yes, update     B: No", 118, 1, COL_WHITE, COL_BLACK);
+        s_last_s = -1;
+    }
+    if (seconds_left == s_last_s) return;
+    s_last_s = seconds_left;
+    char buf[8];
+    std::snprintf(buf, sizeof buf, "%d", seconds_left < 0 ? 0 : seconds_left);
+    M5.Display.fillRect(0, 86, SCR_W, 24, COL_BLACK);
+    draw_centered(buf, 88, 2, COL_WHITE, COL_BLACK);
+}
+
 void draw_ota_failed() {
     clear();
     draw_centered("UPDATE", 30, 3, COL_RED, COL_BLACK);
@@ -558,6 +576,7 @@ namespace ui {
     void draw_zero_cal_progress(int, bool) {}
     void draw_battery(int, bool) {}
     void draw_ota(int, bool) {}
+    void draw_ota_confirm(int, bool) {}
     void draw_ota_failed() {}
     void set_backlight(uint8_t) {}
     uint8_t backlight_percent() { return 100; }

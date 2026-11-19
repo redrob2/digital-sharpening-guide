@@ -223,6 +223,23 @@ void test_set_target_b_enters_preset_mode_and_cycles(void) {
     TEST_ASSERT_EQUAL_FLOAT(12.0f, c.target_deg());
 }
 
+void test_redraw_changes_no_state(void) {
+    // After the update prompt is declined the screen is repainted; that must
+    // not move the state machine or touch the session.
+    App a;
+    a.begin(false);
+    uint32_t t = 0;
+    advance(a, t, 2100);
+    advance(a, t, 100, InputEvent::A_SHORT);            // -> SET_TOLERANCE
+    const Tolerance tol = a.tolerance();
+    const uint32_t  rev = a.settings_rev();
+    a.redraw(t);
+    TEST_ASSERT_EQUAL_INT((int)State::SET_TOLERANCE, (int)a.current());
+    TEST_ASSERT_EQUAL_INT((int)tol, (int)a.tolerance());
+    TEST_ASSERT_TRUE(a.settings_rev() == rev);
+    TEST_ASSERT_EQUAL_UINT32(t, a.last_activity_ms());  // counts as activity, nothing else
+}
+
 void test_last_target_is_remembered_across_boots(void) {
     {
         App a;
@@ -1035,6 +1052,7 @@ int main(int, char**) {
     RUN_TEST(test_set_target_a_captures_and_advances);
     RUN_TEST(test_set_target_b_enters_preset_mode_and_cycles);
     RUN_TEST(test_last_target_is_remembered_across_boots);
+    RUN_TEST(test_redraw_changes_no_state);
     RUN_TEST(test_preset_cycles_to_25_and_28);
     RUN_TEST(test_preset_cancel_returns_to_live_capture);
     RUN_TEST(test_set_target_a_long_opens_verify);

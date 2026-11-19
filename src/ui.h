@@ -49,6 +49,9 @@ namespace ui {
     // Firmware update in progress from the companion app. first = full paint;
     // otherwise only the bar/percentage repaint, and only on change.
     void draw_ota(int percent, bool first);
+    // An update was requested over the link: ask for a button press.
+    // seconds_left repaints once a second.
+    void draw_ota_confirm(int seconds_left, bool first);
     // The transfer was abandoned or rejected; shown briefly before a restart.
     void draw_ota_failed();
 

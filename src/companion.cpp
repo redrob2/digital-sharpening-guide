@@ -47,7 +47,7 @@ constexpr const char* OTA_DATA_UUID = "5347a011-0b1e-4a6c-9d2e-6b6e69666521";
 constexpr uint8_t PROTO_VERSION = 1;
 
 enum OtaStatus : uint8_t { OK = 0, BAD_STATE = 1, FLASH_ERR = 2, MISMATCH = 3, WRONG_BOARD = 4,
-                            LOW_BATTERY = 5 };
+                            LOW_BATTERY = 5, DECLINED = 6 };
 enum OtaCmd    : uint8_t { BEGIN = 0x01, END = 0x03, ABORT = 0x05, RESTART = 0x07, DIAG = 0x09 };
 
 NimBLEServer*         s_server   = nullptr;
@@ -109,6 +109,18 @@ struct Ota {
 };
 Ota s_ota;
 volatile uint32_t s_reboot_at = 0;   // millis() to restart at, 0 = none
+
+// ---- update confirmation ----------------------------------------------------
+// The link has no pairing, so anything in radio range can talk to it. Changing
+// a setting is harmless; replacing the firmware is not. An update therefore
+// only starts after someone presses A on the stick itself. BEGIN parks the
+// request here (BLE task); the main loop shows the prompt, collects the answer
+// and performs the erase.
+constexpr uint32_t OTA_CONFIRM_TIMEOUT_MS = 20000;
+volatile bool     s_confirm_pending  = false;
+volatile int8_t   s_confirm_answer   = 0;        // 0 none yet, 1 yes, -1 no
+volatile uint32_t s_confirm_size     = 0;
+volatile uint32_t s_confirm_deadline = 0;
 // True while END is validating the image (esp_ota_end hashes the whole slot,
 // ~1 s). ota_active() must stay true through it: if the main loop saw neither
 // `active` nor a pending reboot it would report UPDATE FAILED and restart
@@ -175,6 +187,7 @@ class ServerCb : public NimBLEServerCallbacks {
         // A half-written image is useless; free the slot for the next try —
         // but only if it was the uploader that left.
         if (s_ota.active && desc && desc->conn_handle == s_ota_conn) ota_abort();
+        if (s_confirm_pending && desc && desc->conn_handle == s_ota_conn) s_confirm_pending = false;
         NimBLEDevice::startAdvertising();
     }
 };
@@ -210,20 +223,14 @@ class OtaCtrlCb : public NimBLECharacteristicCallbacks {
                 const uint32_t size = rd_u32(d + 1);
                 const esp_partition_t* part = esp_ota_get_next_update_partition(nullptr);
                 if (!part || size == 0 || size > part->size) { ota_reply(BEGIN, MISMATCH); return; }
-                // Erases just `size` bytes of the spare slot — a few seconds.
-                if (esp_ota_begin(part, size, &s_ota.handle) != ESP_OK) {
-                    ota_reply(BEGIN, FLASH_ERR); return;
-                }
-                s_ota.part     = part;
-                s_ota.size     = size;
-                s_ota.recv     = 0;
-                s_ota.crc      = 0xFFFFFFFFu;
-                s_ota.tag_pos  = 0;
-                s_ota.tag_seen = false;
-                s_ota.last_ms  = millis();
-                s_ota_conn     = desc ? desc->conn_handle : 0xFFFF;
-                s_ota.active   = true;
-                ota_reply(BEGIN, OK);
+                if (s_confirm_pending) { ota_reply(BEGIN, BAD_STATE); return; }
+                // Park the request; the reply comes from the main loop once the
+                // user has pressed A (or B / nothing) on the stick.
+                s_ota_conn         = desc ? desc->conn_handle : 0xFFFF;
+                s_confirm_size     = size;
+                s_confirm_answer   = 0;
+                s_confirm_deadline = millis() + OTA_CONFIRM_TIMEOUT_MS;
+                s_confirm_pending  = true;
                 return;
             }
             case END: {
@@ -245,9 +252,13 @@ class OtaCtrlCb : public NimBLECharacteristicCallbacks {
                 return;
             }
             case ABORT:
+                s_confirm_pending = false;
                 ota_abort();
                 ota_reply(ABORT, OK);
                 return;
+#ifdef SG_DIAG
+            // Developer builds only: these let anyone in radio range restart,
+            // power off or override the stick, so release firmware omits them.
             case DIAG: {
                 // [09, stay-awake minutes (0 = cancel), full-rate LIVE 0/1,
                 //  backlight flip period in seconds (0 = off)]
@@ -266,6 +277,7 @@ class OtaCtrlCb : public NimBLECharacteristicCallbacks {
                 ota_reply(RESTART, OK);
                 s_reboot_at = millis() + 500;
                 return;
+#endif
             default:
                 ota_reply(d[0], BAD_STATE);
                 return;
@@ -412,6 +424,34 @@ void update(App& app, uint32_t now_ms, const power::BatteryView& batt) {
         }
         power::restart();
     }
+    // Pending update request: act on the user's answer, or give up.
+    if (s_confirm_pending) {
+        const int8_t ans = s_confirm_answer;
+        if (ans == 1) {
+            const uint32_t size = s_confirm_size;
+            const esp_partition_t* part = esp_ota_get_next_update_partition(nullptr);
+            // Erases just `size` bytes of the spare slot — a few seconds.
+            if (!part || esp_ota_begin(part, size, &s_ota.handle) != ESP_OK) {
+                s_confirm_pending = false;
+                ota_reply(BEGIN, FLASH_ERR);
+            } else {
+                s_ota.part     = part;
+                s_ota.size     = size;
+                s_ota.recv     = 0;
+                s_ota.crc      = 0xFFFFFFFFu;
+                s_ota.tag_pos  = 0;
+                s_ota.tag_seen = false;
+                s_ota.last_ms  = millis();
+                s_ota.active   = true;       // set before dropping `pending`: no gap for the main loop
+                s_confirm_pending = false;
+                ota_reply(BEGIN, OtaStatus::OK);
+            }
+        } else if (ans == -1 || (int32_t)(millis() - s_confirm_deadline) >= 0) {
+            s_confirm_pending = false;
+            ota_reply(BEGIN, DECLINED);
+        }
+    }
+
     // A sender that vanished mid-transfer without disconnecting.
     if (s_ota.active && millis() - s_ota.last_ms > 15000) {
         ota_abort();
@@ -503,6 +543,8 @@ uint8_t brightness_override(uint32_t now_ms) {
     if (period == 0 || !hold_awake(now_ms)) return 0;
     return (((millis() - s_cycle_t0) / (period * 1000u)) % 2u) == 0 ? 100 : 10;
 }
+bool ota_confirm_pending()        { return s_confirm_pending; }
+void ota_confirm_answer(bool yes) { if (s_confirm_pending) s_confirm_answer = yes ? 1 : -1; }
 bool ota_active()  { return s_ota.active || s_finishing || s_reboot_at != 0; }
 int  ota_percent() {
     if (s_reboot_at) return 100;
@@ -519,6 +561,8 @@ namespace companion {
     bool connected()  { return false; }
     bool hold_awake(uint32_t) { return false; }
     uint8_t brightness_override(uint32_t) { return 0; }
+    bool ota_confirm_pending() { return false; }
+    void ota_confirm_answer(bool) {}
     bool ota_active() { return false; }
     int  ota_percent() { return 0; }
 }

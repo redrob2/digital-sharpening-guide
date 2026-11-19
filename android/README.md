@@ -64,3 +64,19 @@ apps" for the file manager you open it with.
    the file was built for your stick's board and refuses it if not. Then tap **Upload to
    stick**. An update takes about a minute. When it's done the stick reboots, and the app
    reconnects to it. **Cancel** aborts the update, and the stick keeps its current firmware.
+
+## Signed release build
+
+`./gradlew :app:assembleRelease` signs with the keystore named in
+`android/keystore.properties` (git-ignored, never commit it):
+
+```
+storeFile=C:/path/to/sharpguide-release.jks
+storePassword=...
+keyAlias=sharpguide
+keyPassword=...
+```
+
+Without that file the release APK comes out unsigned. Keep the keystore and its
+passwords backed up: an app installed from a release APK can only be updated by
+another APK signed with the same key.

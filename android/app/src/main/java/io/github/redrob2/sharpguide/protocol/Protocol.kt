@@ -208,6 +208,7 @@ object Ota {
         3 -> "size/CRC mismatch"
         4 -> "wrong chip"
         5 -> "battery too low, plug the stick in"
+        6 -> "not confirmed on the stick (press A there when it asks)"
         else -> "status $status"
     }
 }

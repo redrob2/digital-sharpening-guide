@@ -24,6 +24,9 @@ public:
     // lost (RTC RAM is otherwise only updated per stroke / side toggle).
     // RTC-RAM write only — no NVS wear.
     void      flush_session_for_sleep();
+    // Repaint the current screen from scratch after something else (the
+    // update prompt) drew over it. Changes no state.
+    void      redraw(uint32_t now_ms);
 
     // Test-only and main-loop accessors
     float     target_deg()       const { return target_deg_; }
